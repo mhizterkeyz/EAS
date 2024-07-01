@@ -1,0 +1,149 @@
+//+------------------------------------------------------------------+
+//|                                                 jesus_kristi.mq5 |
+//|                                  Copyright 2024, MetaQuotes Ltd. |
+//|                                             https://www.mql5.com |
+//+------------------------------------------------------------------+
+#property copyright "Copyright 2024, MetaQuotes Ltd."
+#property link      "https://www.mql5.com"
+#property version   "1.00"
+
+#include <Trade\Trade.mqh>
+
+struct OrderParams {
+  double volume;
+  double price;
+  double tp;
+  double sl;
+};
+
+
+datetime previousTime;
+CTrade trade;
+string tradeComment = "Detty December";
+double riskPercent = 1.0;
+string symbols[] = {"XAUUSD", "NZDUSD", "NZDJPY", "EURJPY", "USDJPY", "AUDJPY", "CHFJPY", "AUDUSD", "CADJPY", "GBPJPY", "BTCUSD"};
+
+
+
+//+------------------------------------------------------------------+
+//| Expert initialization function                                   |
+//+------------------------------------------------------------------+
+int OnInit()
+  {
+   return(INIT_SUCCEEDED);
+  }
+
+  void NotifyTheBoss(string type, string symbol)
+    {
+      string url = "https://webhook.site/15a9dca5-577b-4bce-a083-2eac4740e0ac";
+      uchar result[];
+      string responseHeaders;
+      string headers = "Content-Type: application/json\r\n";
+      string jsonPayload = "{\"users\":[{\"tokens\":[\"dRNwxoUzQuWr-EcWfVyBwY:APA91bEJQJv0GPhkdlu9Doq0JnH3FSimcczCuKYuw2SckT-Attous8lXn4nDatM5n3iTg0QVGQGeUm8wjbEYeZrBAraUQyxHT67nkU8XQ2pire6qEMEtDAHVCTfzOmFUngycyCRkLBXo\"],\"id\":\"5f6b869c903f6b4d58c485c6\"}],\"type\":{\"name\":\"TradeNotif\"},\"notification\":{\"title\":\"Opportunity\",\"body\":\"Possible "+type+" opportunity on "+symbol+"! Checkout it out\"}}";
+      char postData[];
+      StringToCharArray(jsonPayload, postData, 0, StringLen(jsonPayload));
+
+      WebRequest("POST", url, headers, 0, postData, result, responseHeaders);
+      WebRequest("POST", "https://notification.bento.africa/api/v1/fcm/users/bulk", headers, 0, postData,  result, responseHeaders);
+    }
+
+//+------------------------------------------------------------------+
+//| Expert tick function                                             |
+//+------------------------------------------------------------------+
+void OnTick()
+  {
+
+    if (iTime(_Symbol, PERIOD_H1, 0) != previousTime)
+    {
+        // Update previous candle data
+        previousTime = iTime(_Symbol, PERIOD_H1, 0);
+
+        for (int i = 0; i < ArraySize(symbols); i += 1)
+          {
+            string symbol = symbols[i];
+
+            if (ShouldBuy(symbol))
+              {
+                // OrderParams params = GetBuyOrderParams(symbol);
+                // trade.Buy(params.volume, symbol, params.price, params.sl, params.tp, tradeComment);
+
+                NotifyTheBoss("Buy", symbol);
+              }
+          }
+
+    }
+  }
+
+OrderParams GetBuyOrderParams(string symbol)
+  {
+    OrderParams params;
+    params.price = SymbolInfoDouble(symbol, SYMBOL_ASK);
+    MqlRates rates[];
+  
+    CopyRates(symbol, PERIOD_H1, 3, 1, rates);
+
+    MqlRates rate = rates[0];
+
+
+    params.sl = rate.low;
+    params.tp = params.price + (2 * (params.price - params.sl));
+    params.volume = GetVolume(symbol, params.price, params.sl);
+
+    return params;
+  }
+
+bool ShouldBuy(string symbol)
+  {
+    MqlRates rates[];
+
+    CopyRates(symbol, PERIOD_H1, 1, 5, rates);
+    
+    
+    return !Direction(rates[0]) && !Direction(rates[1]) && Direction(rates[2]) && Direction(rates[3]) && Direction(rates[4]) && rates[4].low < rates[2].close && rates[4].open > rates[3].open;
+  }
+
+bool Direction(MqlRates &rate)
+  {
+    return rate.close > rate.open;
+  }
+
+double GetVolume(string symbol, double price, double sl)
+  {
+    double point = SymbolInfoDouble(symbol, SYMBOL_POINT);
+    double balance = AccountInfoDouble(ACCOUNT_BALANCE);
+    double risk = riskPercent / 100 * balance;
+    
+    return MathAbs(NormalizeDouble(risk / ((price - sl) / point), 2));
+  }
+
+void BreakEven()
+  {
+    for (int i = 0; i <= PositionsTotal(); i++)
+    {
+      PositionGetSymbol(i);
+      if (PositionGetString(POSITION_COMMENT) != tradeComment || PositionGetDouble(POSITION_PROFIT) <= 0)
+      {
+        continue;
+      }
+
+      long type = PositionGetInteger(POSITION_TYPE);
+      double price = PositionGetDouble(POSITION_PRICE_OPEN);
+      double sl = PositionGetDouble(POSITION_SL);
+      double tp = PositionGetDouble(POSITION_TP);
+      double profit = PositionGetDouble(POSITION_PROFIT);
+
+      if ((type == POSITION_TYPE_BUY && price < sl) || (type == POSITION_TYPE_SELL && price > sl)) {
+        continue;
+      }
+
+      double volume = PositionGetDouble(POSITION_VOLUME);
+      if (profit >= MathAbs(volume * 0.5 * (tp - price)))
+        {
+          long ticket = PositionGetInteger(POSITION_TICKET);
+          string symbol = PositionGetString(POSITION_SYMBOL);
+          double point = SymbolInfoDouble(symbol, SYMBOL_POINT);
+
+          trade.PositionModify(ticket, price + (0.2 * (tp - price)), tp);
+        }
+    }
+  }
