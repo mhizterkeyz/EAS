@@ -16,12 +16,11 @@ struct OrderParams {
   double sl;
 };
 
-
-datetime previousTime;
 CTrade trade;
 string tradeComment = "Detty December";
 double riskPercent = 1.0;
-string symbols[] = {"XAUUSD", "NZDUSD", "NZDJPY", "EURJPY", "USDJPY", "AUDJPY", "CHFJPY", "AUDUSD", "CADJPY", "GBPJPY", "BTCUSD"};
+string symbols[] = {"XAUUSD", "NZDUSD", "NZDJPY", "EURJPY", "USDJPY", "AUDJPY", "CHFJPY", "AUDUSD", "CADJPY", "GBPJPY", "BTCUSD", "EURNZD", "GBPNZD"};
+string signals[];
 
 
 
@@ -52,26 +51,23 @@ int OnInit()
 //+------------------------------------------------------------------+
 void OnTick()
   {
+    BreakEven();
+    for (int i = 0; i < ArraySize(symbols); i += 1)
+      {
+        MqlDateTime currentTime;
+        TimeToStruct(TimeCurrent(), currentTime);
+        string symbol = symbols[i];
+        string signal = IntegerToString(currentTime.day_of_year)+IntegerToString(currentTime.hour)+symbol;
 
-    if (iTime(_Symbol, PERIOD_H1, 0) != previousTime)
-    {
-        // Update previous candle data
-        previousTime = iTime(_Symbol, PERIOD_H1, 0);
-
-        for (int i = 0; i < ArraySize(symbols); i += 1)
+        if (ShouldBuy(symbol) && !IsSignalCalled(signal + "Buy"))
           {
-            string symbol = symbols[i];
+            AddSignalToList(signal + "Buy");
+            OrderParams params = GetBuyOrderParams(symbol);
+            trade.Buy(params.volume, symbol, params.price, params.sl, params.tp, tradeComment);
 
-            if (ShouldBuy(symbol))
-              {
-                // OrderParams params = GetBuyOrderParams(symbol);
-                // trade.Buy(params.volume, symbol, params.price, params.sl, params.tp, tradeComment);
-
-                NotifyTheBoss("Buy", symbol);
-              }
+            NotifyTheBoss("Buy", symbol);
           }
-
-    }
+      }
   }
 
 OrderParams GetBuyOrderParams(string symbol)
@@ -99,7 +95,7 @@ bool ShouldBuy(string symbol)
     CopyRates(symbol, PERIOD_H1, 1, 5, rates);
     
     
-    return !Direction(rates[0]) && !Direction(rates[1]) && Direction(rates[2]) && Direction(rates[3]) && Direction(rates[4]) && rates[4].low < rates[2].close && rates[4].open > rates[3].open;
+    return /*!Direction(rates[0]) &&*/ !Direction(rates[1]) && Direction(rates[2]) && Direction(rates[3]) && Direction(rates[4]) && rates[4].low < rates[2].close && rates[4].open > rates[3].open;
   }
 
 bool Direction(MqlRates &rate)
@@ -146,4 +142,20 @@ void BreakEven()
           trade.PositionModify(ticket, price + (0.2 * (tp - price)), tp);
         }
     }
+  }
+
+void AddSignalToList(string signal)
+  {
+    ArrayResize(signals, ArraySize(signals) + 1);
+    signals[ArraySize(signals) - 1] = signal;
+  }
+
+bool IsSignalCalled(string signal)
+  {
+    for (int i = ArraySize(signals) - 1; i > 0; i--)
+    {
+      if (signals[i] == signal)
+        return true;
+    }
+    return false;
   }
