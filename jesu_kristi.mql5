@@ -19,7 +19,7 @@ struct OrderParams {
 CTrade trade;
 string tradeComment = "Detty December";
 double riskPercent = 1.0;
-string symbols[] = {"XAUUSD", "NZDUSD", "NZDJPY", "EURJPY", "USDJPY", "AUDJPY", "CHFJPY", "AUDUSD", "CADJPY", "GBPJPY", "BTCUSD", "EURNZD", "GBPNZD"};
+string symbols[] = {"XAUUSDm", "NZDUSDm", "NZDJPYm", "EURJPYm", "USDJPYm", "AUDJPYm", "CHFJPYm", "AUDUSDm", "CADJPYm", "GBPJPYm", "BTCUSDm", "EURNZDm", "GBPNZDm"};
 string signals[];
 
 
@@ -93,6 +93,11 @@ bool ShouldBuy(string symbol)
     MqlRates rates[];
 
     CopyRates(symbol, PERIOD_H1, 1, 5, rates);
+    if (ArraySize(rates) < 5)
+      {
+        Print("problem with symbol ", symbol);
+        return false;
+      }
     
     
     return /*!Direction(rates[0]) &&*/ !Direction(rates[1]) && Direction(rates[2]) && Direction(rates[3]) && Direction(rates[4]) && rates[4].low < rates[2].close && rates[4].open > rates[3].open;
@@ -107,7 +112,10 @@ double GetVolume(string symbol, double price, double sl)
   {
     double point = SymbolInfoDouble(symbol, SYMBOL_POINT);
     double balance = AccountInfoDouble(ACCOUNT_BALANCE);
-    double risk = riskPercent / 100 * balance;
+    double risk = 50; // riskPercent / 100 * balance;
+    if (StringFind(symbol, "USD") == -1) {
+      risk = 100;
+    }
     
     return MathAbs(NormalizeDouble(risk / ((price - sl) / point), 2));
   }
