@@ -76,12 +76,11 @@ OrderParams GetBuyOrderParams(string symbol)
     params.price = SymbolInfoDouble(symbol, SYMBOL_ASK);
     MqlRates rates[];
   
-    CopyRates(symbol, PERIOD_H1, 3, 1, rates);
-
-    MqlRates rate = rates[0];
+    CopyRates(symbol, PERIOD_H1, 1, 4, rates);
 
 
-    params.sl = rate.low;
+
+    params.sl = MathMin(rates[0].low, MathMin(rates[1].low, MathMin(rates[2].low, rates[3].low)));
     params.tp = params.price + (2 * (params.price - params.sl));
     params.volume = GetVolume(symbol, params.price, params.sl);
 
