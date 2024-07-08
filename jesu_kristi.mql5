@@ -19,7 +19,81 @@ struct OrderParams {
 CTrade trade;
 string tradeComment = "Detty December";
 double riskPercent = 1.0;
-string symbols[] = {"XAUUSDm", "NZDUSDm", "NZDJPYm", "EURJPYm", "USDJPYm", "AUDJPYm", "CHFJPYm", "AUDUSDm", "CADJPYm", "GBPJPYm", "BTCUSDm", "EURNZDm", "GBPNZDm"};
+string symbols[] = {
+  "XAUUSDm",
+  "NZDUSDm",
+  "NZDJPYm",
+  "EURJPYm",
+  "USDJPYm",
+  "AUDJPYm",
+  "CHFJPYm",
+  "AUDUSDm",
+  "CADJPYm", 
+  "GBPJPYm",
+  "BTCUSDm",
+  "EURNZDm",
+  "GBPNZDm",
+  "EURGBPm",
+  "GBPCADm"
+};
+// string symbols[] = {
+//   "XAUUSD",
+//   "NZDUSD",
+//   "NZDJPY",
+//   "EURJPY",
+//   "USDJPY",
+//   "AUDJPY",
+//   "CHFJPY",
+//   "AUDUSD",
+//   "CADJPY", 
+//   "GBPJPY",
+//   "BTCUSD",
+//   "EURNZD",
+//   "GBPNZD",
+//   "EURGBP",
+//   "GBPCAD"
+// };
+// string symbols[] = {
+//   "Volatility 10 Index",
+//   "Volatility 25 Index",
+//   "Volatility 50 Index",
+//   "Volatility 75 Index",
+//   "Volatility 100 Index",
+//   "Volatility 10 (1s) Index",
+//   "Volatility 25 (1s) Index",
+//   "Volatility 50 (1s) Index",
+//   "Volatility 300 (1s) Index",
+//   "Volatility 75 (1s) Index",
+//   "Volatility 100 (1s) Index",
+//   "Volatility 150 (1s) Index",
+//   "Volatility 250 (1s) Index",
+//   "Volatility 200 (1s) Index",
+//   "Boom 500 Index",
+//   "Boom 300 Index",
+//   "Boom 1000 Index",
+//   "Crash 500 Index",
+//   "Crash 300 Index",
+//   "Crash 1000 Index",
+//   "Step Index",
+//   "Step Index 200",
+//   "Step Index 500",
+//   "Range Break 100 Index",
+//   "Range Break 200 Index",
+//   "Jump 25 Index",
+//   "Jump 10 Index",
+//   "Jump 50 Index",
+//   "Jump 100 Index",
+//   "Jump 75 Index",
+//   "DEX 600 DOWN Index",
+//   "DEX 900 DOWN Index",
+//   "DEX 1500 DOWN Index",
+//   "DEX 600 UP Index",
+//   "DEX 900 UP Index",
+//   "DEX 1500 UP Index",
+//   "Drift Switch Index 30",
+//   "Drift Switch Index 20",
+//   "Drift Switch Index 10"
+// };
 string signals[];
 
 
@@ -51,7 +125,7 @@ int OnInit()
 //+------------------------------------------------------------------+
 void OnTick()
   {
-    BreakEven();
+    // BreakEven();
     for (int i = 0; i < ArraySize(symbols); i += 1)
       {
         MqlDateTime currentTime;
@@ -59,7 +133,7 @@ void OnTick()
         string symbol = symbols[i];
         string signal = IntegerToString(currentTime.day_of_year)+IntegerToString(currentTime.hour)+symbol;
 
-        if (ShouldBuy(symbol) && !IsSignalCalled(signal + "Buy"))
+        if (!IsSignalCalled(signal + "Buy") && !IsTradeOpen(symbol) && ShouldBuy(symbol))
           {
             AddSignalToList(signal + "Buy");
             OrderParams params = GetBuyOrderParams(symbol);
@@ -72,6 +146,7 @@ void OnTick()
 
 OrderParams GetBuyOrderParams(string symbol)
   {
+    double pointSize = SymbolInfoDouble(symbol, SYMBOL_POINT);
     OrderParams params;
     params.price = SymbolInfoDouble(symbol, SYMBOL_ASK);
     MqlRates rates[];
@@ -80,9 +155,10 @@ OrderParams GetBuyOrderParams(string symbol)
 
 
 
-    params.sl = MathMin(rates[0].low, MathMin(rates[1].low, MathMin(rates[2].low, rates[3].low)));
-    params.tp = params.price + (2 * (params.price - params.sl));
-    params.volume = GetVolume(symbol, params.price, params.sl);
+    double padding = (pointSize * 30 * 10);
+    params.sl = MathMin(rates[0].low, MathMin(rates[1].low, MathMin(rates[2].low, rates[3].low))) - padding;
+    params.tp = params.price + (6 * (params.price - params.sl));
+    params.volume = CalculateVolume(50, params.price, params.sl, symbol);
 
     return params;
   }
@@ -110,13 +186,21 @@ bool Direction(MqlRates &rate)
 double GetVolume(string symbol, double price, double sl)
   {
     double point = SymbolInfoDouble(symbol, SYMBOL_POINT);
-    double balance = AccountInfoDouble(ACCOUNT_BALANCE);
-    double risk = 50; // riskPercent / 100 * balance;
-    if (StringFind(symbol, "USD") == -1) {
-      risk = 100;
+    string baseCurrency = StringSubstr(symbol, 0, 3);
+    string accountCurrency = AccountInfoString(ACCOUNT_CURRENCY);
+    double convertionRate = SymbolInfoDouble(baseCurrency + accountCurrency, SYMBOL_BID);
+    if (baseCurrency == accountCurrency) {
+      convertionRate = 1.0;
     }
+    if (convertionRate == 0.0) {
+      convertionRate = SymbolInfoDouble(accountCurrency + baseCurrency, SYMBOL_BID);
+    }
+
+    double tickValue = SymbolInfoDouble(symbol, SYMBOL_TRADE_TICK_VALUE);
+    // double balance = AccountInfoDouble(ACCOUNT_BALANCE);
+    double risk = 50; // riskPercent / 100 * balance;
     
-    return MathAbs(NormalizeDouble(risk / ((price - sl) / point), 2));
+    return NormalizeDouble(risk / (MathAbs(price - sl) / point) * tickValue * (1 / convertionRate), 2);
   }
 
 void BreakEven()
@@ -164,5 +248,37 @@ bool IsSignalCalled(string signal)
       if (signals[i] == signal)
         return true;
     }
+    return false;
+  }
+
+double CalculateVolume(double riskAmount, double entryPrice, double stopLoss, string symbol) 
+  {
+      double tickValue = SymbolInfoDouble(symbol, SYMBOL_TRADE_TICK_VALUE);
+      double pointSize = SymbolInfoDouble(symbol, SYMBOL_POINT);
+      double lotStep = SymbolInfoDouble(symbol, SYMBOL_VOLUME_STEP);
+      double tickSize = SymbolInfoDouble(symbol, SYMBOL_TRADE_TICK_SIZE);
+
+
+      double pipDifference = MathAbs(entryPrice - stopLoss) / pointSize;
+
+      double pipValue = tickValue * (pointSize / tickSize);
+
+      double volume = riskAmount / (pipDifference * pipValue);
+
+      volume = MathFloor(volume / lotStep) * lotStep;
+
+      return volume;
+  }
+
+bool IsTradeOpen(string symbol)
+  {
+    for (int i = 0; i < PositionsTotal(); i++)
+    {
+      if (PositionGetSymbol(i) == symbol && PositionGetString(POSITION_COMMENT) == tradeComment)
+      {
+        return true;
+      }
+    }
+
     return false;
   }
