@@ -37,7 +37,7 @@ double riskPercent = 1.0;
   "EURGBPm",
   "GBPCADm"
 };*/
-string symbols[] = {
+/*string symbols[] = {
    "XAUUSD",
    "NZDUSD",
    "NZDJPY",
@@ -53,8 +53,8 @@ string symbols[] = {
    "GBPNZD",
    "EURGBP",
    "GBPCAD"
-};
-/* string symbols[] = {
+};*/
+ string symbols[] = {
   "Volatility 10 Index",
   "Volatility 25 Index",
   "Volatility 50 Index",
@@ -94,7 +94,7 @@ string symbols[] = {
   "Drift Switch Index 30",
   "Drift Switch Index 20",
   "Drift Switch Index 10"
-}; */
+}; 
 string signals[];
 
 
@@ -107,41 +107,12 @@ int OnInit()
    return(INIT_SUCCEEDED);
   }
 
-void NotifyTheBoss(string type, string symbol)
-  {
-    string url = "https://webhook.site/15a9dca5-577b-4bce-a083-2eac4740e0ac";
-    uchar result[];
-    string responseHeaders;
-    string headers = "Content-Type: application/json\r\n";
-    string jsonPayload = "{\"users\":[{\"tokens\":[\"dRNwxoUzQuWr-EcWfVyBwY:APA91bEJQJv0GPhkdlu9Doq0JnH3FSimcczCuKYuw2SckT-Attous8lXn4nDatM5n3iTg0QVGQGeUm8wjbEYeZrBAraUQyxHT67nkU8XQ2pire6qEMEtDAHVCTfzOmFUngycyCRkLBXo\"],\"id\":\"5f6b869c903f6b4d58c485c6\"}],\"type\":{\"name\":\"TradeNotif\"},\"notification\":{\"title\":\"Opportunity\",\"body\":\"Possible "+type+" opportunity on "+symbol+"! Checkout it out\"}}";
-    char postData[];
-    StringToCharArray(jsonPayload, postData, 0, StringLen(jsonPayload));
-
-    WebRequest("POST", url, headers, 0, postData, result, responseHeaders);
-    WebRequest("POST", "https://notification.bento.africa/api/v1/fcm/users/bulk", headers, 0, postData,  result, responseHeaders);
-  }
-
-void SendStillAliveNotif()
-  {
-    uchar result[];
-    string responseHeaders;
-    string headers = "Content-Type: application/json\r\n";
-    string jsonPayload = "{\"users\":[{\"tokens\":[\"dRNwxoUzQuWr-EcWfVyBwY:APA91bEJQJv0GPhkdlu9Doq0JnH3FSimcczCuKYuw2SckT-Attous8lXn4nDatM5n3iTg0QVGQGeUm8wjbEYeZrBAraUQyxHT67nkU8XQ2pire6qEMEtDAHVCTfzOmFUngycyCRkLBXo\"],\"id\":\"5f6b869c903f6b4d58c485c6\"}],\"type\":{\"name\":\"TradeNotif\"},\"notification\":{\"title\":\"Still Alive\",\"body\":\"EA Running!\"}}";
-    char postData[];
-    StringToCharArray(jsonPayload, postData, 0, StringLen(jsonPayload));
-
-    WebRequest("POST", "https://notification.bento.africa/api/v1/fcm/users/bulk", headers, 0, postData,  result, responseHeaders);
-  }
-
-//+------------------------------------------------------------------+
-//| Expert tick function                                             |
-//+------------------------------------------------------------------+
 void OnTick()
   {
     if (iTime(_Symbol, PERIOD_H4, 0) != previousTime)
     {
         previousTime = iTime(_Symbol, PERIOD_H4, 0);
-        SendStillAliveNotif();
+        SendNotification("Still Alive!");;
     }
 
     for (int i = 0; i < ArraySize(symbols); i += 1)
@@ -157,7 +128,7 @@ void OnTick()
             OrderParams params = GetBuyOrderParams(symbol);
             trade.Buy(params.volume, symbol, params.price, params.sl, params.tp, tradeComment);
 
-            NotifyTheBoss("Buy", symbol);
+            SendNotification("Possible Buy opportunity on "+symbol+"! Check it out");
           }
       }
   }
