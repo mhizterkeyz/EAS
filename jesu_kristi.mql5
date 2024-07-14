@@ -20,6 +20,7 @@ datetime previousTime;
 CTrade trade;
 string tradeComment = "Detty December";
 double riskPercent = 1.0;
+double riskAmount = 50;
 /*string symbols[] = {
   "XAUUSDm",
   "NZDUSDm",
@@ -147,7 +148,7 @@ OrderParams GetBuyOrderParams(string symbol)
     double padding = (pointSize * 30 * 10);
     params.sl = MathMin(rates[0].low, MathMin(rates[1].low, MathMin(rates[2].low, rates[3].low))) - padding;
     params.tp = params.price + (6 * (params.price - params.sl));
-    params.volume = CalculateVolume(50, params.price, params.sl, symbol);
+    params.volume = CalculateVolume(riskAmount, params.price, params.sl, symbol);
 
     return params;
   }
@@ -156,40 +157,20 @@ bool ShouldBuy(string symbol)
   {
     MqlRates rates[];
 
-    CopyRates(symbol, PERIOD_H1, 1, 5, rates);
-    if (ArraySize(rates) < 5)
+    CopyRates(symbol, PERIOD_H1, 1, 4, rates);
+    if (ArraySize(rates) < 4)
       {
         Print("problem with symbol ", symbol);
         return false;
       }
     
     
-    return /*!Direction(rates[0]) &&*/ !Direction(rates[1]) && Direction(rates[2]) && Direction(rates[3]) && Direction(rates[4]) && rates[4].low < rates[2].close && rates[4].open > rates[3].open;
+    return !Direction(rates[0]) && Direction(rates[1]) && Direction(rates[2]) && Direction(rates[3]) && rates[3].low < rates[1].close && rates[3].open > rates[2].open;
   }
 
 bool Direction(MqlRates &rate)
   {
     return rate.close > rate.open;
-  }
-
-double GetVolume(string symbol, double price, double sl)
-  {
-    double point = SymbolInfoDouble(symbol, SYMBOL_POINT);
-    string baseCurrency = StringSubstr(symbol, 0, 3);
-    string accountCurrency = AccountInfoString(ACCOUNT_CURRENCY);
-    double convertionRate = SymbolInfoDouble(baseCurrency + accountCurrency, SYMBOL_BID);
-    if (baseCurrency == accountCurrency) {
-      convertionRate = 1.0;
-    }
-    if (convertionRate == 0.0) {
-      convertionRate = SymbolInfoDouble(accountCurrency + baseCurrency, SYMBOL_BID);
-    }
-
-    double tickValue = SymbolInfoDouble(symbol, SYMBOL_TRADE_TICK_VALUE);
-    // double balance = AccountInfoDouble(ACCOUNT_BALANCE);
-    double risk = 50; // riskPercent / 100 * balance;
-    
-    return NormalizeDouble(risk / (MathAbs(price - sl) / point) * tickValue * (1 / convertionRate), 2);
   }
 
 void BreakEven()
@@ -240,7 +221,7 @@ bool IsSignalCalled(string signal)
     return false;
   }
 
-double CalculateVolume(double riskAmount, double entryPrice, double stopLoss, string symbol) 
+double CalculateVolume(double _riskAmount, double entryPrice, double stopLoss, string symbol) 
   {
       double tickValue = SymbolInfoDouble(symbol, SYMBOL_TRADE_TICK_VALUE);
       double pointSize = SymbolInfoDouble(symbol, SYMBOL_POINT);
@@ -252,7 +233,7 @@ double CalculateVolume(double riskAmount, double entryPrice, double stopLoss, st
 
       double pipValue = tickValue * (pointSize / tickSize);
 
-      double volume = riskAmount / (pipDifference * pipValue);
+      double volume = _riskAmount / (pipDifference * pipValue);
 
       volume = MathFloor(volume / lotStep) * lotStep;
 
