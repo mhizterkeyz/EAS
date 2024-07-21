@@ -21,7 +21,7 @@ CTrade trade;
 string tradeComment = "Detty December";
 double riskPercent = 1.0;
 double riskAmount = 50;
-/*string symbols[] = {
+string symbols[] = {
   "XAUUSDm",
   "NZDUSDm",
   "NZDJPYm",
@@ -37,7 +37,7 @@ double riskAmount = 50;
   "GBPNZDm",
   "EURGBPm",
   "GBPCADm"
-};*/
+};
 /*string symbols[] = {
    "XAUUSD",
    "NZDUSD",
@@ -55,7 +55,7 @@ double riskAmount = 50;
    "EURGBP",
    "GBPCAD"
 };*/
- string symbols[] = {
+/*string symbols[] = {
   "Volatility 10 Index",
   "Volatility 25 Index",
   "Volatility 50 Index",
@@ -95,8 +95,10 @@ double riskAmount = 50;
   "Drift Switch Index 30",
   "Drift Switch Index 20",
   "Drift Switch Index 10"
-}; 
+};*/
 string signals[];
+double startingBalance;
+double lastPercentage = 0;
 
 
 
@@ -105,6 +107,7 @@ string signals[];
 //+------------------------------------------------------------------+
 int OnInit()
   {
+    startingBalance = AccountInfoDouble(ACCOUNT_BALANCE);
    return(INIT_SUCCEEDED);
   }
 
@@ -113,7 +116,16 @@ void OnTick()
     if (iTime(_Symbol, PERIOD_H4, 0) != previousTime)
     {
         previousTime = iTime(_Symbol, PERIOD_H4, 0);
-        SendNotification("EA Running!");;
+        SendNotification("EA Running!");
+    }
+
+    double equity = AccountInfoDouble(ACCOUNT_EQUITY);
+    double percentageChange = MathFloor((equity - startingBalance) / startingBalance * 100);
+    double remainder = (int)percentageChange % 2;
+    if (remainder == 0 && lastPercentage != percentageChange)
+    {
+      lastPercentage = percentageChange;
+      SendNotification(DoubleToString(percentageChange, 0) + "% change in balance");
     }
 
     for (int i = 0; i < ArraySize(symbols); i += 1)
