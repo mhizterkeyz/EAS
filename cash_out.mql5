@@ -1,0 +1,192 @@
+//+------------------------------------------------------------------+
+//|                                                 jesus_kristi.mq5 |
+//|                                  Copyright 2024, MetaQuotes Ltd. |
+//|                                             https://www.mql5.com |
+//+------------------------------------------------------------------+
+#property copyright "Copyright 2024, MetaQuotes Ltd."
+#property link "https://www.mql5.com"
+#property version "1.00"
+
+#include <Trade\Trade.mqh>
+
+struct KeyLevel {
+  datetime time;
+  double price;
+  string type;
+};
+
+struct OrderParams {
+  double volume;
+  double price;
+  double tp;
+  double sl;
+};
+
+CTrade trade;
+string tradeComment = "CashOut V1";
+
+string symbols[] = {
+   "XAUUSD",
+   "NZDUSD",
+   "NZDJPY",
+   "EURJPY",
+   "USDJPY",
+   "AUDJPY",
+   "CHFJPY",
+   "AUDUSD",
+   "CADJPY", 
+   "GBPJPY",
+   "BTCUSD",
+   "EURNZD",
+   "GBPNZD",
+   "EURGBP",
+   "GBPCAD"
+};
+
+string signals[];
+
+//+------------------------------------------------------------------+
+//| Expert initialization function                                   |
+//+------------------------------------------------------------------+
+int OnInit()
+  {
+    SendNotification(tradeComment + " Loaded!");
+    return (INIT_SUCCEEDED);
+  }
+
+void OnTick()
+  {
+    for (int k = 0; k < ArraySize(symbols); k++)
+      {
+        string symbol = symbols[k];
+
+        MqlRates rates[];
+
+        CopyRates(symbol, PERIOD_H4, 1, 42, rates);
+
+        int rateLength = ArraySize(rates);
+
+        for (int i = 0; i < rateLength; i += 1)
+          {
+            if (i + 1 > rateLength - 1)
+              {
+                continue;
+              }
+
+            KeyLevel keyLevel = GetKeyLevel(rates[i], rates[i + 1]);
+            if (keyLevel.price != 0.0)
+              {
+                for (int j = 0; j < i; j++) {
+                  MqlRates rate = rates[j];
+
+                  if (rate.high > keyLevel.price && MathMax(rate.open, rate.close) < keyLevel.price)
+                    {
+                      if (ProcessLowerTF(symbol, j, false, keyLevel))
+                        return;
+                    }
+
+                  if (rate.low < keyLevel.price && MathMax(rate.open, rate.close) > keyLevel.price)
+                    {
+                      if (ProcessLowerTF(symbol, j, true, keyLevel))
+                        return;
+                    }
+                }
+              }
+          }
+      }
+  }
+
+bool ProcessLowerTF(string symbol, int nthH4Canle, bool type, KeyLevel &keyLevel)
+  {
+    MqlRates rates[];
+
+    CopyRates(symbol, PERIOD_H1, 1, 4 * nthH4Canle, rates);
+
+    int rateLength = ArraySize(rates);
+
+    for (int i = rateLength - 1; i >= 0; i -= 1)
+      {
+        bool isEngulfing = IsEngulfing(rates[i], rates[(int)MathMax(0, i - 1)], type);
+        if (isEngulfing)
+          {
+              MqlRates engulfingCandle = rates[i];
+              string signal = (type ? "Buy ": "Sell ") + symbol + " 4h " + keyLevel.type + " keylevel @ " + DoubleToString(keyLevel.price) + " " + FormatDateTime(keyLevel.time) + " and engulfing @ " + DoubleToString(engulfingCandle.open) + " " + FormatDateTime(engulfingCandle.time);
+              if (!IsSignalCalled(signal)) {
+                AddSignalToList(signal);
+                Print(signal);
+                SendNotification(signal);
+              }
+              return true;
+          }
+      }
+
+    return false;
+  }
+
+KeyLevel GetKeyLevel(MqlRates &firstCandle, MqlRates &secondCandle)
+  {
+    KeyLevel keyLevel;
+    keyLevel.price = 0.0;
+    keyLevel.type = "NA";
+    keyLevel.time = NULL;
+
+    if (Direction(firstCandle) && !Direction(secondCandle) && firstCandle.open == secondCandle.close)
+      {
+        keyLevel.price = firstCandle.open;
+        keyLevel.type = "V";
+        keyLevel.time = firstCandle.time;
+      }
+    
+    if (!Direction(firstCandle) && Direction(secondCandle) && firstCandle.open == secondCandle.close)
+      {
+        keyLevel.price = firstCandle.open;
+        keyLevel.type = "A";
+        keyLevel.time = firstCandle.time;
+      }
+
+    if (Direction(firstCandle) == Direction(secondCandle) && firstCandle.open == secondCandle.close)
+      {
+        keyLevel.price = firstCandle.open;
+        keyLevel.type = "OC";
+        keyLevel.time = firstCandle.time;
+      }
+
+    return keyLevel;
+  }
+
+bool IsEngulfing(MqlRates &currentCandle, MqlRates &prvCandle, bool type)
+  {
+    return currentCandle.high > prvCandle.high &&
+    currentCandle.low < prvCandle.low &&
+    Direction(currentCandle) == type &&
+    MathMax(currentCandle.open, currentCandle.close) > MathMax(prvCandle.open, prvCandle.close) &&
+    MathMin(currentCandle.open, currentCandle.close) < MathMin(prvCandle.open, prvCandle.close);
+  }
+
+bool Direction(MqlRates &rate)
+  {
+    return rate.close > rate.open;
+  }
+
+void AddSignalToList(string signal)
+  {
+    ArrayResize(signals, ArraySize(signals) + 1);
+    signals[ArraySize(signals) - 1] = signal;
+  }
+
+bool IsSignalCalled(string signal)
+  {
+    for (int i = ArraySize(signals) - 1; i >= 0; i--)
+    {
+      if (signals[i] == signal)
+        return true;
+    }
+    return false;
+  }
+
+string FormatDateTime(datetime time) {
+  MqlDateTime currentTime;
+  TimeToStruct(TimeGMT(), currentTime);
+
+  return StringFormat("%02d/%02d/%02d %02d:%02d:%02d", currentTime.year, currentTime.mon, currentTime.day, currentTime.hour, currentTime.min, currentTime.sec);
+}

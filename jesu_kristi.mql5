@@ -125,7 +125,7 @@ void OnTick()
     if (remainder == 0 && lastPercentage != percentageChange)
     {
       lastPercentage = percentageChange;
-      SendNotification(DoubleToString(percentageChange, 0) + "% change in balance");
+      SendNotification(DoubleToString(percentageChange, 0) + "% change in balance $" + DoubleToString((equity - startingBalance), 2));
     }
 
     for (int i = 0; i < ArraySize(symbols); i += 1)
@@ -233,24 +233,35 @@ bool IsSignalCalled(string signal)
     return false;
   }
 
-double CalculateVolume(double _riskAmount, double entryPrice, double stopLoss, string symbol) 
-  {
-      double tickValue = SymbolInfoDouble(symbol, SYMBOL_TRADE_TICK_VALUE);
-      double pointSize = SymbolInfoDouble(symbol, SYMBOL_POINT);
-      double lotStep = SymbolInfoDouble(symbol, SYMBOL_VOLUME_STEP);
-      double tickSize = SymbolInfoDouble(symbol, SYMBOL_TRADE_TICK_SIZE);
+double CalculateVolume(double riskAmount, double entryPrice, double stopLoss, string symbol) {
+    double volumeMax = SymbolInfoDouble(symbol, SYMBOL_VOLUME_MAX);
+    double volumeMin = SymbolInfoDouble(symbol, SYMBOL_VOLUME_MIN);
+    double volume = volumeMin;
+    double lotStep = SymbolInfoDouble(symbol, SYMBOL_VOLUME_STEP);
+    double profit = 0.0;
+    int decimalPlaces = GetDecimalPlaces(lotStep);
 
+    int counter = 0;
+    while (OrderCalcProfit(ORDER_TYPE_BUY, symbol, volume, MathMin(entryPrice, stopLoss), MathMax(entryPrice, stopLoss), profit) && profit < riskAmount && volume < volumeMax) {
+        volume += lotStep;
+    }
 
-      double pipDifference = MathAbs(entryPrice - stopLoss) / pointSize;
+    if (profit > riskAmount) {
+        volume = volume - lotStep;
+    }
 
-      double pipValue = tickValue * (pointSize / tickSize);
+    return MathMin(volumeMax, MathMax(NormalizeDouble(volume, decimalPlaces), volumeMin));
+}
 
-      double volume = _riskAmount / (pipDifference * pipValue);
+int GetDecimalPlaces (double number) {
+    int decimalPlaces = 0;
+    while (NormalizeDouble(number, decimalPlaces) != number && decimalPlaces < 15) {
+        decimalPlaces += 1;
+    }
+    
 
-      volume = MathFloor(volume / lotStep) * lotStep;
-
-      return volume;
-  }
+    return decimalPlaces;
+}
 
 bool IsTradeOpen(string symbol)
   {

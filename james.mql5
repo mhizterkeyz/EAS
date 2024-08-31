@@ -1,0 +1,192 @@
+#include <Trade\Trade.mqh>
+
+struct OrderParams {
+  double volume;
+  double price;
+  double tp;
+  double sl;
+};
+
+CTrade trade;
+datetime previousTime;
+string tradeComment = "James EA";
+input int TradingDaysStart = 1;
+input int TradingDaysEnd = 5;
+input int TradingHoursStart = 6;
+input int TradingHoursEnd = 20;
+input int SLPoints = 50;
+input int RR = 1;
+input double RiskAmount = 10.0;
+string symbols[] = {
+   "XAUUSD",
+   "NZDUSD",
+   "NZDJPY",
+   "EURJPY",
+   "USDJPY",
+   "AUDJPY",
+   "CHFJPY",
+   "AUDUSD",
+   "CADJPY", 
+   "GBPJPY",
+   "BTCUSD",
+   "EURNZD",
+   "GBPNZD",
+   "EURGBP",
+   "GBPCAD"
+};
+
+
+int OnInit()
+    {
+        return (INIT_SUCCEEDED);
+    }
+
+void OnTick()
+    {
+        if (IsInTradingWindow())
+            {
+                ManageTrades();
+                if (iTime(_Symbol, PERIOD_H4, 0) != previousTime)
+                    {
+                        previousTime = iTime(_Symbol, PERIOD_H4, 0);
+                        for (int k = 0; k < ArraySize(symbols); k++)
+                            {
+                                TradeSymbol(symbols[k]);
+                            }
+                    }
+            }
+        else
+            CloseAllPositions();
+    }
+
+void TradeSymbol(string symbol)
+    {
+        if (IsSymbolInUse(symbol))
+            return;
+
+        MqlRates rates[];
+        CopyRates(symbol, PERIOD_H1, 1, 1, rates);
+        MqlRates rate = rates[0];
+        
+        if (Direction(rate))
+            BuySymbol(symbol);
+        else
+            SellSymbol(symbol);
+    }
+
+void BuySymbol(string symbol)
+    {
+        OrderParams order;
+
+        order.price = SymbolInfoDouble(symbol, SYMBOL_ASK);
+        order.sl = order.price - (SLPoints * SymbolInfoDouble(symbol, SYMBOL_POINT));
+        order.volume = CalculateVolume(RiskAmount, order.price, order.sl, symbol);
+
+        trade.Buy(order.volume, symbol, order.price, 0, 0, tradeComment);
+    }
+
+void SellSymbol(string symbol)
+    {
+        OrderParams order;
+
+        order.price = SymbolInfoDouble(symbol, SYMBOL_BID);
+        order.sl = order.price + (SLPoints * SymbolInfoDouble(symbol, SYMBOL_POINT));
+        order.volume = CalculateVolume(RiskAmount, order.price, order.sl, symbol);
+
+        trade.Sell(order.volume, symbol, order.price, 0, 0, tradeComment);
+    }
+
+bool Direction(MqlRates &rate)
+    {
+        return rate.close > rate.open;
+    }
+
+bool IsInTradingWindow()
+    {
+        MqlDateTime currentTime;
+        TimeToStruct(TimeGMT(), currentTime);
+
+        return currentTime.day_of_week >= TradingDaysStart && currentTime.day_of_week <= TradingDaysEnd && currentTime.hour >= TradingHoursStart && currentTime.hour <= TradingHoursEnd;
+    }
+
+bool IsSymbolInUse(string symbol)
+    {
+        for(int i = 0; i <= PositionsTotal(); i += 1)
+            {
+                if(PositionGetSymbol(i) == symbol && PositionGetString(POSITION_COMMENT) == tradeComment)
+                {
+                    return true; 
+                }
+            }
+
+        for(int j = 0; j < OrdersTotal(); j += 1)
+            {
+                if(OrderGetTicket(j) && OrderGetString(ORDER_SYMBOL) == symbol && OrderGetString(ORDER_COMMENT) == tradeComment)
+                {
+                    return true;
+                }
+            }
+
+        return false;
+    }
+
+double CalculateVolume(double _riskAmount, double entryPrice, double stopLoss, string symbol) 
+    {
+        double tickValue = SymbolInfoDouble(symbol, SYMBOL_TRADE_TICK_VALUE);
+        double pointSize = SymbolInfoDouble(symbol, SYMBOL_POINT);
+        double lotStep = SymbolInfoDouble(symbol, SYMBOL_VOLUME_STEP);
+        double tickSize = SymbolInfoDouble(symbol, SYMBOL_TRADE_TICK_SIZE);
+
+
+        double pipDifference = MathAbs(entryPrice - stopLoss) / pointSize;
+
+        double pipValue = tickValue * (pointSize / tickSize);
+
+        double volume = _riskAmount / (pipDifference * pipValue);
+
+        volume = MathFloor(volume / lotStep) * lotStep;
+
+        return volume;
+    }
+
+
+void ManageTrades()
+    {
+        for(int i = 0; i <= PositionsTotal(); i += 1)
+            {
+                if(PositionGetSymbol(i) != "" && PositionGetString(POSITION_COMMENT) == tradeComment)
+                {
+                    bool isBuyTrade = PositionGetInteger(POSITION_TYPE) == POSITION_TYPE_BUY;
+                    string symbol = PositionGetString(POSITION_SYMBOL);
+                    double bidPrice = SymbolInfoDouble(symbol, SYMBOL_BID);
+                    double askPrice = SymbolInfoDouble(symbol, SYMBOL_ASK);
+                    double entryPrice = PositionGetDouble(POSITION_PRICE_OPEN);
+                    double tp = entryPrice + ((isBuyTrade ? 1 : -1) * (SLPoints * SymbolInfoDouble(symbol, SYMBOL_POINT) * RR));
+                    double sl = entryPrice + ((isBuyTrade ? -1 : 1) * (SLPoints * SymbolInfoDouble(symbol, SYMBOL_POINT)));
+                    if ((isBuyTrade && askPrice >= tp) || (!isBuyTrade && bidPrice >= sl))
+                        {
+                            trade.PositionClose(PositionGetInteger(POSITION_TICKET));
+                            // BuySymbol(symbol);
+                        }
+                    if ((isBuyTrade && askPrice <= sl) || (!isBuyTrade && bidPrice <= tp))
+                        {
+                            trade.PositionClose(PositionGetInteger(POSITION_TICKET));
+                            // SellSymbol(symbol);
+                        }
+                    if ((isBuyTrade && bidPrice >= entryPrice + (SLPoints * SymbolInfoDouble(symbol, SYMBOL_POINT) * 2)) || (!isBuyTrade && askPrice <= entryPrice - (SLPoints * SymbolInfoDouble(symbol, SYMBOL_POINT) * 2)))
+                        {
+                            trade.PositionModify(PositionGetInteger(POSITION_TICKET), entryPrice + ((isBuyTrade ? 1 : -1) * (SLPoints * SymbolInfoDouble(symbol, SYMBOL_POINT) * 2)), 0);
+                        }
+                }
+            }
+    }
+
+void CloseAllPositions()
+    {
+        for (int i = 0; i <= PositionsTotal(); i += 1)
+        {
+            if (PositionGetSymbol(i) != "" && PositionGetString(POSITION_COMMENT) == tradeComment) {
+                trade.PositionClose(PositionGetInteger(POSITION_TICKET));
+            }
+        }
+    }

@@ -1,0 +1,6 @@
+{
+  "files.associations": {
+    "*.mql5": "c",
+    "*.mq5": "c"
+  }
+}
