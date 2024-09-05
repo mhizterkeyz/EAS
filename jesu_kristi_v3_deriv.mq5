@@ -8,7 +8,9 @@ input int TradingDaysEnd = 5;
 input int TradingHoursStart = 6;
 input int TradingHoursEnd = 20;
 input double TargetAmount = 50;
+input bool StopAtTargetHit = true;
 
+bool canTrade = true;
 datetime previousTime;
 CTrade trade;
 string tradeComment = "JESU KRISTI V3 DERIV";
@@ -37,21 +39,23 @@ int OnInit() {
  }
 
 void OnTick() {
-    ManageBalance();
-    if (iTime(_Symbol, TimeFrame, 0) != previousTime) {
-        previousTime = iTime(_Symbol, TimeFrame, 0);
-        SendNotification(tradeComment + " Health Notif!");
-        if (IsInTradingWindow()) {
-            for (int i = 0; i < ArraySize(symbols); i += 1) {
-                string symbol = symbols[i];
-                string signal = CheckEntry(symbol, TimeFrame);
+    if (canTrade) {
+        ManageBalance();
+        if (iTime(_Symbol, TimeFrame, 0) != previousTime) {
+            previousTime = iTime(_Symbol, TimeFrame, 0);
+            SendNotification(tradeComment + " Health Notif!");
+            if (IsInTradingWindow()) {
+                for (int i = 0; i < ArraySize(symbols); i += 1) {
+                    string symbol = symbols[i];
+                    string signal = CheckEntry(symbol, TimeFrame);
 
-                if (signal == "buy" && !IsSymbolInUse(symbol)) {
-                    Buy(symbol, TimeFrame);
-                }
+                    if (signal == "buy" && !IsSymbolInUse(symbol)) {
+                        Buy(symbol, TimeFrame);
+                    }
 
-                if (signal == "sell" && !IsSymbolInUse(symbol)) {
-                    Sell(symbol, TimeFrame);
+                    if (signal == "sell" && !IsSymbolInUse(symbol)) {
+                        Sell(symbol, TimeFrame);
+                    }
                 }
             }
         }
@@ -217,6 +221,20 @@ void CloseAllPositions() {
             trade.PositionClose(PositionGetInteger(POSITION_TICKET));
         }
     }
+    if (_PositionsTotal() > 0) {
+        CloseAllPositions();
+    }
+}
+
+int _PositionsTotal() {
+    int count = 0;
+    for (int i = 0; i <= PositionsTotal(); i += 1) {
+        if (PositionGetSymbol(i) != "" && PositionGetString(POSITION_COMMENT) == tradeComment) {
+            count += 1;
+        }
+    }
+
+    return count;
 }
 
 
@@ -253,5 +271,8 @@ void ManageBalance() {
         startingBalance += TargetAmount;
         CloseAllPositions();
         SendNotification(tradeComment + " Target Hit!");
+        if (StopAtTargetHit) {
+            canTrade = false;
+        }
     }
 }
