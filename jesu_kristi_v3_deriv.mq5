@@ -9,6 +9,7 @@ input int TradingHoursStart = 6;
 input int TradingHoursEnd = 20;
 input double TargetAmount = 50;
 input bool StopAtTargetHit = true;
+input bool TakeTradeOnInit = false;
 
 bool canTrade = true;
 datetime previousTime;
@@ -34,7 +35,8 @@ string symbols[] = {
 int OnInit() {
    SendNotification(tradeComment + " Loaded!");
    startingBalance = AccountInfoDouble(ACCOUNT_BALANCE);
-   previousTime = iTime(_Symbol, TimeFrame, 0);
+   if (!TakeTradeOnInit)
+      previousTime = iTime(_Symbol, TimeFrame, 0);
    return(INIT_SUCCEEDED);
  }
 
@@ -268,8 +270,8 @@ bool IsSymbolInUse(string symbol) {
 void ManageBalance() {
     double equity = AccountInfoDouble(ACCOUNT_EQUITY);
     if (equity - startingBalance >= TargetAmount) {
-        startingBalance += TargetAmount;
         CloseAllPositions();
+        startingBalance = AccountInfoDouble(ACCOUNT_BALANCE);
         SendNotification(tradeComment + " Target Hit!");
         if (StopAtTargetHit) {
             canTrade = false;
