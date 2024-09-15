@@ -73,9 +73,14 @@ void Buy(string symbol, ENUM_TIMEFRAMES timeframe) {
     double price = SymbolInfoDouble(symbol, SYMBOL_ASK);
     double sl = MathMin(rates[0].low, MathMin(rates[1].low, rates[2].low));
     double tp = price + ((price - sl) * RR);
-    double volume = CalculateVolume(RiskAmount, price, sl, symbol);
+    double volumes[];
+    
+    CalculateVolume(RiskAmount, price, sl, symbol, volumes);
 
-    trade.Buy(volume, symbol, price, sl, tp, tradeComment);
+    for (int i = 0; i < ArraySize(volumes); i++) {
+        double volume = volumes[i];
+        trade.Buy(volume, symbol, price, sl, tp, tradeComment);
+    }
 }
 
 void Sell(string symbol, ENUM_TIMEFRAMES timeframe) {
@@ -87,31 +92,12 @@ void Sell(string symbol, ENUM_TIMEFRAMES timeframe) {
     double price = SymbolInfoDouble(symbol, SYMBOL_BID);
     double sl = MathMax(rates[0].high, MathMax(rates[1].high, rates[2].high));
     double tp = price + ((price - sl) * RR);
-    double volume = CalculateVolume(RiskAmount, price, sl, symbol);
+    double volumes[];
+    
+    CalculateVolume(RiskAmount, price, sl, symbol, volumes);
 
-    trade.Sell(volume, symbol, price, sl, tp, tradeComment);
-}
-
-void _Buy(string symbol, ENUM_TIMEFRAMES timeframe) {
-    MqlRates engulfingCandle;
-    if (GetEngulfingCandle(symbol, timeframe, true, engulfingCandle)) {
-        double price = SymbolInfoDouble(symbol, SYMBOL_ASK);
-        double sl = engulfingCandle.low;
-        double tp = price + ((price - sl) * RR);
-        double volume = CalculateVolume(RiskAmount, price, sl, symbol);
-
-        trade.Buy(volume, symbol, price, sl, tp, tradeComment);
-    }
-}
-
-void _Sell(string symbol, ENUM_TIMEFRAMES timeframe) {
-    MqlRates engulfingCandle;
-    if (GetEngulfingCandle(symbol, timeframe, false, engulfingCandle)) {
-        double price = SymbolInfoDouble(symbol, SYMBOL_BID);
-        double sl = engulfingCandle.high;
-        double tp = price + ((price - sl) * RR);
-        double volume = CalculateVolume(RiskAmount, price, sl, symbol);
-
+    for (int i = 0; i < ArraySize(volumes); i++) {
+        double volume = volumes[i];
         trade.Sell(volume, symbol, price, sl, tp, tradeComment);
     }
 }
@@ -187,24 +173,28 @@ void ReverseArray(T &rates[]) {
     }
 }
 
-double CalculateVolume(double riskAmount, double entryPrice, double stopLoss, string symbol) {
+void CalculateVolume(double riskAmount, double entryPrice, double stopLoss, string symbol, double &volumes[]) {
+    double totalProfit = 0.0;
     double volumeMax = SymbolInfoDouble(symbol, SYMBOL_VOLUME_MAX);
     double volumeMin = SymbolInfoDouble(symbol, SYMBOL_VOLUME_MIN);
-    double volume = volumeMin;
     double lotStep = SymbolInfoDouble(symbol, SYMBOL_VOLUME_STEP);
-    double profit = 0.0;
     int decimalPlaces = GetDecimalPlaces(lotStep);
+    
+    while (totalProfit < riskAmount) {
+        double volume = volumeMin;
+        double profit = 0.0;
+    
+        while (OrderCalcProfit(ORDER_TYPE_BUY, symbol, volume, MathMin(entryPrice, stopLoss), MathMax(entryPrice, stopLoss), profit) && profit < (riskAmount - totalProfit) && volume < volumeMax) {
+            volume += lotStep;
+        }
+        
+        if (profit > (riskAmount - totalProfit)) {
+            volume = volume - lotStep;
+        }
 
-    int counter = 0;
-    while (OrderCalcProfit(ORDER_TYPE_BUY, symbol, volume, MathMin(entryPrice, stopLoss), MathMax(entryPrice, stopLoss), profit) && profit < riskAmount && volume < volumeMax) {
-        volume += lotStep;
+        AddToList(volumes, MathMin(volumeMax, NormalizeDouble(volume, decimalPlaces)));
+        totalProfit += profit;
     }
-
-    if (profit > riskAmount) {
-        volume = volume - lotStep;
-    }
-
-    return MathMin(volumeMax, NormalizeDouble(volume, decimalPlaces));
 }
 
 int GetDecimalPlaces (double number) {
@@ -212,10 +202,16 @@ int GetDecimalPlaces (double number) {
     while (NormalizeDouble(number, decimalPlaces) != number && decimalPlaces < 15) {
         decimalPlaces += 1;
     }
-    
 
     return decimalPlaces;
 }
+
+template<typename T>
+void AddToList(T &list[], T item)
+  {
+    ArrayResize(list, ArraySize(list) + 1);
+    list[ArraySize(list) - 1] = item;
+  }
 
 void CloseAllPositions() {
     for (int i = 0; i <= PositionsTotal(); i += 1) {

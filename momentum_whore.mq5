@@ -53,6 +53,7 @@ void Buy(string symbol, MqlRates &momentumCandle) {
     double tp = price + ((price - sl) * RR);
     double volumes[];
     double risk = GetRisk();
+    SendNotification("Buy trade on "+symbol+" executed!");
     
     CalculateVolume(risk, price, sl, symbol, volumes);
 
@@ -68,6 +69,7 @@ void Sell(string symbol, MqlRates &momentumCandle) {
     double tp = price + ((price - sl) * RR);
     double volumes[];
     double risk = GetRisk();
+    SendNotification("Sell trade on "+symbol+" executed!");
     
     CalculateVolume(risk, price, sl, symbol, volumes);
 
@@ -137,11 +139,11 @@ void CalculateVolume(double riskAmount, double entryPrice, double stopLoss, stri
         double volume = volumeMin;
         double profit = 0.0;
     
-        while (OrderCalcProfit(ORDER_TYPE_BUY, symbol, volume, MathMin(entryPrice, stopLoss), MathMax(entryPrice, stopLoss), profit) && profit < riskAmount && volume < volumeMax) {
+        while (OrderCalcProfit(ORDER_TYPE_BUY, symbol, volume, MathMin(entryPrice, stopLoss), MathMax(entryPrice, stopLoss), profit) && profit < (riskAmount - totalProfit) && volume < volumeMax) {
             volume += lotStep;
         }
         
-        if (profit > riskAmount) {
+        if (profit > (riskAmount - totalProfit)) {
             volume = volume - lotStep;
         }
 
