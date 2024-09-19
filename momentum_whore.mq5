@@ -15,6 +15,7 @@ input double RiskAmount = 100;
 CTrade Trade;
 string TradeComment = "MOMENTUM WHORE";
 datetime PreviousTime;
+datetime ManageTradePreviousTime;
 string Symbols[] = {
    "XAUUSD",
    "EURJPY",
@@ -25,10 +26,12 @@ string Symbols[] = {
 int OnInit() {
    SendNotification(TradeComment + " Loaded!");
    PreviousTime = iTime(_Symbol, TimeFrame, 0);
+   ManageTradePreviousTime = iTime(_Symbol, TimeFrame, 0);
    return(INIT_SUCCEEDED);
 }
 
 void OnTick() {
+    ManageTrades();
     if (iTime(_Symbol, TimeFrame, 0) != PreviousTime) {
         PreviousTime = iTime(_Symbol, TimeFrame, 0);
 
@@ -47,6 +50,12 @@ void OnTick() {
     }
 }
 
+/**
+ * Break even when it starts going your way (use current method with 100% (1 * x)) - maybe
+ * As the next candle no b green, gedifuck out (if e close below your entry)
+ * Reduce risk by 25% on SL hit
+ */
+
 void Buy(string symbol, MqlRates &momentumCandle) {
     double price = SymbolInfoDouble(symbol, SYMBOL_ASK);
     double sl = price - (0.382 * (momentumCandle.high - momentumCandle.low));
@@ -59,6 +68,7 @@ void Buy(string symbol, MqlRates &momentumCandle) {
 
     for (int i = 0; i < ArraySize(volumes); i++) {
         double volume = volumes[i];
+        SendNotification("Buy "+symbol+" "+DoubleToString(volume)+" TP: "+DoubleToString(tp)+" SL: "+DoubleToString(sl));
         Trade.Buy(volume, symbol, price, sl, tp, TradeComment);
     }
 }
@@ -92,7 +102,9 @@ Signal GetSignal(string symbol, ENUM_TIMEFRAMES timeframe) {
     MqlRates lastCandle = rates[0];
     double averageMomentum = GetAverageMomentum(symbol, timeframe);
     signal.successful = false;
-    if ((lastCandle.high - lastCandle.low) >= (MomentumMultiplier * averageMomentum)) {
+    bool isMomentumCandle = (lastCandle.high - lastCandle.low) >= (MomentumMultiplier * averageMomentum);
+    bool candleHasSizeableBody = MathAbs(lastCandle.open - lastCandle.close) > 0.5 * (lastCandle.high - lastCandle.low);
+    if (isMomentumCandle && candleHasSizeableBody) {
 
         signal.lastCandle = lastCandle;
         signal.type = lastCandle.open > lastCandle.close ? "sell" : "buy";
@@ -167,3 +179,47 @@ void AddToList(T &list[], T item)
     ArrayResize(list, ArraySize(list) + 1);
     list[ArraySize(list) - 1] = item;
   }
+
+void ManageTrades() {
+    if (iTime(_Symbol, TimeFrame, 0) != ManageTradePreviousTime) {
+        ManageTradePreviousTime = iTime(_Symbol, TimeFrame, 0);
+
+        for(int i = 0; i <= PositionsTotal(); i += 1) {
+            if(PositionGetSymbol(i) != "" && PositionGetString(POSITION_COMMENT) == TradeComment) {
+                string symbol = PositionGetString(POSITION_SYMBOL);
+                bool isBuyTrade = PositionGetInteger(POSITION_TYPE) == POSITION_TYPE_BUY;
+                double entryPrice = PositionGetDouble(POSITION_PRICE_OPEN);
+                MqlRates rates[];
+
+                CopyRates(symbol, TimeFrame, 1, 1, rates);
+
+                MqlRates lastCandle = rates[0];
+                
+                if ((lastCandle.close < entryPrice && isBuyTrade) || (lastCandle.close > entryPrice && !isBuyTrade)) {
+                    Trade.PositionClose(PositionGetInteger(POSITION_TICKET));
+                }
+            }
+        }
+    }
+}
+
+void _ManageTrades() {
+    for(int i = 0; i <= PositionsTotal(); i += 1) {
+        if(PositionGetSymbol(i) != "" && PositionGetString(POSITION_COMMENT) == TradeComment) {
+            double stopLoss = PositionGetDouble(POSITION_SL);
+            double entryPrice = PositionGetDouble(POSITION_PRICE_OPEN);
+            bool isBuyTrade = PositionGetInteger(POSITION_TYPE) == POSITION_TYPE_BUY;
+            string symbol = PositionGetString(POSITION_SYMBOL);
+            double currentPrice = SymbolInfoDouble(symbol, isBuyTrade ? SYMBOL_BID : SYMBOL_ASK);
+            bool is200PercentOfSL = MathAbs(currentPrice - entryPrice) >= 1 * MathAbs(stopLoss - entryPrice);
+            bool isModified = (isBuyTrade && (stopLoss >= entryPrice)) || (!isBuyTrade && (stopLoss <= entryPrice));
+            if (!isModified && is200PercentOfSL) {
+                double newStopLoss = entryPrice + 0.25 * (currentPrice - entryPrice);
+                double takeProfit = PositionGetDouble(POSITION_TP);
+                long ticket = PositionGetInteger(POSITION_TICKET);
+
+                Trade.PositionModify(ticket, newStopLoss, takeProfit);
+            }
+        }
+    }
+}
