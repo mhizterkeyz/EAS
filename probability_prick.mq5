@@ -11,20 +11,18 @@ input int AverageLookupCount = 10;
 input int MomentumMultiplier = 2;
 input double RR = 3;
 input double RiskAmount = 100;
+input string Symbols = "XAUUSD,EURJPY,BTCUSD";
 
 CTrade Trade;
-string TradeComment = "MOMENTUM WHORE";
+string TradeComment = "PROBABILITY PRICK";
 datetime PreviousTime;
-string Symbols[] = {
-   "XAUUSD",
-   "EURJPY",
-   "BTCUSD"
-};
+string _Symbols[];
 
 
 int OnInit() {
    SendNotification(TradeComment + " Loaded!");
    PreviousTime = iTime(_Symbol, TimeFrame, 0);
+   StringSplit(Symbols, ',', _Symbols);
    return(INIT_SUCCEEDED);
 }
 
@@ -32,13 +30,15 @@ void OnTick() {
     if (iTime(_Symbol, TimeFrame, 0) != PreviousTime) {
         PreviousTime = iTime(_Symbol, TimeFrame, 0);
 
-        for (int i = 0; i < ArraySize(Symbols); i++) {
-            string symbol = Symbols[i];
+        for (int i = 0; i < ArraySize(_Symbols); i++) {
+            string symbol = _Symbols[i];
             if (!IsSymbolInUse(symbol)) {
                 Signal signal = GetSignal(symbol, TimeFrame);
                 if (signal.successful) {
-                    if (signal.type == "buy")
+                    if (signal.type == "buy") {
                         Buy(symbol, signal.lastCandle);
+                        Print("Momentum Candle High: ", signal.lastCandle.high);
+                    }
                     // if (signal.type == "sell")
                     //     Sell(symbol, signal.lastCandle);
                 }
@@ -54,21 +54,51 @@ void OnTick() {
  */
 
 void Buy(string symbol, MqlRates &momentumCandle) {
-    double price = SymbolInfoDouble(symbol, SYMBOL_ASK);
-    double sl = price - (0.382 * (momentumCandle.high - momentumCandle.low));
-    double tp = price + ((price - sl) * RR);
+    double price = SymbolInfoDouble(symbol, SYMBOL_BID);
+    double sl = price + (momentumCandle.high - momentumCandle.low);
+    double tp = price - 0.5 * (momentumCandle.high - momentumCandle.low);
     double volumes[];
     double risk = GetRisk();
-    SendNotification("Buy trade on "+symbol+" executed!");
     
     CalculateVolume(risk, price, sl, symbol, volumes);
 
     for (int i = 0; i < ArraySize(volumes); i++) {
         double volume = volumes[i];
-        SendNotification("Buy "+symbol+" "+DoubleToString(volume)+" TP: "+DoubleToString(tp)+" SL: "+DoubleToString(sl));
-        Trade.Buy(volume, symbol, price, sl, tp, TradeComment);
+        Trade.Sell(volume, symbol, price, sl, tp, TradeComment);
     }
 }
+
+// void Buy(string symbol, MqlRates &momentumCandle) {
+//     double price = SymbolInfoDouble(symbol, SYMBOL_BID);
+//     double tp = price - (0.382 * (momentumCandle.high - momentumCandle.low));
+//     double sl = price + ((price - tp) * RR);
+//     double volumes[];
+//     double risk = GetRisk();
+    
+//     CalculateVolume(risk, price, sl, symbol, volumes);
+
+//     for (int i = 0; i < ArraySize(volumes); i++) {
+//         double volume = volumes[i];
+//         Trade.Sell(volume, symbol, price, sl, tp, TradeComment);
+//     }
+// }
+
+// void Buy(string symbol, MqlRates &momentumCandle) {
+//     double price = SymbolInfoDouble(symbol, SYMBOL_ASK);
+//     double sl = price - (0.382 * (momentumCandle.high - momentumCandle.low));
+//     double tp = price + ((price - sl) * RR);
+//     double volumes[];
+//     double risk = GetRisk();
+//     SendNotification("Buy trade on "+symbol+" executed!");
+    
+//     CalculateVolume(risk, price, sl, symbol, volumes);
+
+//     for (int i = 0; i < ArraySize(volumes); i++) {
+//         double volume = volumes[i];
+//         SendNotification("Buy "+symbol+" "+DoubleToString(volume)+" TP: "+DoubleToString(tp)+" SL: "+DoubleToString(sl));
+//         Trade.Buy(volume, symbol, price, sl, tp, TradeComment);
+//     }
+// }
 
 void Sell(string symbol, MqlRates &momentumCandle) {
     double price = SymbolInfoDouble(symbol, SYMBOL_BID);
@@ -94,7 +124,7 @@ Signal GetSignal(string symbol, ENUM_TIMEFRAMES timeframe) {
     Signal signal;
     MqlRates rates[];
 
-    CopyRates(symbol, timeframe, 1, 1, rates);
+    CopyRates(symbol, timeframe, 0, 1, rates);
     
     MqlRates lastCandle = rates[0];
     double averageMomentum = GetAverageMomentum(symbol, timeframe);
@@ -114,7 +144,7 @@ Signal GetSignal(string symbol, ENUM_TIMEFRAMES timeframe) {
 double GetAverageMomentum(string symbol, ENUM_TIMEFRAMES timeframe) {
     MqlRates rates[];
 
-    CopyRates(symbol, timeframe, 2, AverageLookupCount, rates);
+    CopyRates(symbol, timeframe, 1, AverageLookupCount, rates);
 
     double totalMomentum = 0;
 
