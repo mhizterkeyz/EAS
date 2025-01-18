@@ -1,17 +1,20 @@
 #include <Trade\Trade.mqh>
 
-input ENUM_TIMEFRAMES TimeFrame = PERIOD_H4;
+input ENUM_TIMEFRAMES TimeFrame = PERIOD_M5;
 input double RiskAmount = 10;
-input double RR = 15;
+input double RR = 3;
 input int TradingDaysStart = 1;
 input int TradingDaysEnd = 5;
 input int TradingHoursStart = 6;
 input int TradingHoursEnd = 20;
 input double TargetAmount = 50;
+input bool StopAtTargetHit = true;
+input bool TakeTradeOnInit = false;
 
+bool canTrade = true;
 datetime previousTime;
 CTrade trade;
-string tradeComment = "JESU KRISTI V3";
+string tradeComment = "JESU KRISTI V3 DERIV";
 double startingBalance;
 string symbols[] = {
     "XAUUSD",
@@ -24,37 +27,85 @@ string symbols[] = {
     "GBPJPY",
     "EURNZD",
     "GBPNZD",
-
 };
+double SLPercent = 0.1;
 
 int OnInit() {
-   SendNotification(tradeComment + " Loaded!");
    startingBalance = AccountInfoDouble(ACCOUNT_BALANCE);
-   previousTime = iTime(_Symbol, TimeFrame, 0);
+
+   if (!TakeTradeOnInit)
+      previousTime = iTime(_Symbol, TimeFrame, 0);
+
+   SendNotification(tradeComment + " Loaded!");
+
    return(INIT_SUCCEEDED);
  }
 
 void OnTick() {
-    ManageBalance();
-    if (iTime(_Symbol, TimeFrame, 0) != previousTime) {
-        previousTime = iTime(_Symbol, TimeFrame, 0);
-        SendNotification(tradeComment + " Health Notif!");
-        if (IsInTradingWindow()) {
-            for (int i = 0; i < ArraySize(symbols); i += 1) {
-                string symbol = symbols[i];
-                string signal = CheckEntry(symbol, TimeFrame);
+    if (canTrade) {
+        ManageBalance();
 
-                if (signal == "buy" && !IsSymbolInUse(symbol)) {
-                    Buy(symbol, TimeFrame);
-                }
+        if (iTime(_Symbol, TimeFrame, 0) != previousTime) {
+            previousTime = iTime(_Symbol, TimeFrame, 0);
 
-                if (signal == "sell" && !IsSymbolInUse(symbol)) {
-                    Sell(symbol, TimeFrame);
+            SendNotification(tradeComment + " Health Notif!");
+
+            if (IsInTradingWindow()) {
+                for (int i = 0; i < ArraySize(symbols); i += 1) {
+                    if (CanTrade()) {
+                        string symbol = symbols[i];
+                        string signal = CheckEntry(symbol, TimeFrame);
+
+                        if (signal == "buy" && !IsSymbolInUse(symbol)) {
+                            Buy(symbol, TimeFrame);
+                        }
+
+                        if (signal == "sell" && !IsSymbolInUse(symbol)) {
+                            Sell(symbol, TimeFrame);
+                        }
+                    }
                 }
             }
+
         }
     }
 }
+
+// void Buy(string symbol, ENUM_TIMEFRAMES timeframe) {
+//     MqlRates rates[];
+
+//     CopyRates(symbol, timeframe, 0, 3, rates);
+
+//     double pointSize = SymbolInfoDouble(symbol, SYMBOL_POINT);
+//     double price = SymbolInfoDouble(symbol, SYMBOL_BID);
+//     double sl = price - (MathMax(rates[0].high, MathMax(rates[1].high, rates[2].high)) - MathMin(rates[0].low, MathMin(rates[1].low, rates[2].low))) * SLPercent;
+//     double tp = price + ((price - sl) * RR);
+//     double volumes[];
+    
+//     CalculateVolume(RiskAmount, price, sl, symbol, volumes);
+
+//     for (int i = 0; i < ArraySize(volumes); i += 1) {
+//         trade.Sell(volumes[i], symbol, price, tp, sl, tradeComment);
+//     }
+// }
+
+// void Sell(string symbol, ENUM_TIMEFRAMES timeframe) {
+//     MqlRates rates[];
+
+//     CopyRates(symbol, timeframe, 0, 3, rates);
+
+//     double pointSize = SymbolInfoDouble(symbol, SYMBOL_POINT);
+//     double price = SymbolInfoDouble(symbol, SYMBOL_ASK);
+//     double sl = price + (MathMax(rates[0].high, MathMax(rates[1].high, rates[2].high)) - MathMin(rates[0].low, MathMin(rates[1].low, rates[2].low))) * SLPercent;
+//     double tp = price + ((price - sl) * RR);
+//     double volumes[];
+    
+//     CalculateVolume(RiskAmount, price, sl, symbol, volumes);
+
+//     for (int i = 0; i < ArraySize(volumes); i += 1) {
+//         trade.Buy(volumes[i], symbol, price, tp, sl, tradeComment);
+//     }
+// }
 
 void Buy(string symbol, ENUM_TIMEFRAMES timeframe) {
     MqlRates rates[];
@@ -63,11 +114,15 @@ void Buy(string symbol, ENUM_TIMEFRAMES timeframe) {
 
     double pointSize = SymbolInfoDouble(symbol, SYMBOL_POINT);
     double price = SymbolInfoDouble(symbol, SYMBOL_ASK);
-    double sl = MathMin(rates[0].low, MathMin(rates[1].low, rates[2].low));
+    double sl = price - (MathMax(rates[0].high, MathMax(rates[1].high, rates[2].high)) - MathMin(rates[0].low, MathMin(rates[1].low, rates[2].low))) * SLPercent;
     double tp = price + ((price - sl) * RR);
-    double volume = CalculateVolume(RiskAmount, price, sl, symbol);
+    double volumes[];
+    
+    CalculateVolume(RiskAmount, price, sl, symbol, volumes);
 
-    trade.Buy(volume, symbol, price, sl, tp, tradeComment);
+    for (int i = 0; i < ArraySize(volumes); i += 1) {
+        trade.Buy(volumes[i], symbol, price, sl, tp, tradeComment);
+    }
 }
 
 void Sell(string symbol, ENUM_TIMEFRAMES timeframe) {
@@ -77,66 +132,16 @@ void Sell(string symbol, ENUM_TIMEFRAMES timeframe) {
 
     double pointSize = SymbolInfoDouble(symbol, SYMBOL_POINT);
     double price = SymbolInfoDouble(symbol, SYMBOL_BID);
-    double sl = MathMax(rates[0].high, MathMax(rates[1].high, rates[2].high));
+    double sl = price + (MathMax(rates[0].high, MathMax(rates[1].high, rates[2].high)) - MathMin(rates[0].low, MathMin(rates[1].low, rates[2].low))) * SLPercent;
     double tp = price + ((price - sl) * RR);
-    double volume = CalculateVolume(RiskAmount, price, sl, symbol);
+    double volumes[];
+    
+    CalculateVolume(RiskAmount, price, sl, symbol, volumes);
 
-    trade.Sell(volume, symbol, price, sl, tp, tradeComment);
-}
-
-void _Buy(string symbol, ENUM_TIMEFRAMES timeframe) {
-    MqlRates engulfingCandle;
-    if (GetEngulfingCandle(symbol, timeframe, true, engulfingCandle)) {
-        double price = SymbolInfoDouble(symbol, SYMBOL_ASK);
-        double sl = engulfingCandle.low;
-        double tp = price + ((price - sl) * RR);
-        double volume = CalculateVolume(RiskAmount, price, sl, symbol);
-
-        trade.Buy(volume, symbol, price, sl, tp, tradeComment);
+    for (int i = 0; i < ArraySize(volumes); i += 1) {
+        trade.Sell(volumes[i], symbol, price, sl, tp, tradeComment);
     }
 }
-
-void _Sell(string symbol, ENUM_TIMEFRAMES timeframe) {
-    MqlRates engulfingCandle;
-    if (GetEngulfingCandle(symbol, timeframe, false, engulfingCandle)) {
-        double price = SymbolInfoDouble(symbol, SYMBOL_BID);
-        double sl = engulfingCandle.high;
-        double tp = price + ((price - sl) * RR);
-        double volume = CalculateVolume(RiskAmount, price, sl, symbol);
-
-        trade.Sell(volume, symbol, price, sl, tp, tradeComment);
-    }
-}
-
-bool GetEngulfingCandle(string symbol, ENUM_TIMEFRAMES timeframe, bool dir, MqlRates &res) {
-    MqlRates rates[];
-
-    CopyRates(symbol, timeframe, 1, 10, rates);
-
-    int length = ArraySize(rates);
-
-    for (int i = 0; i < length; i += 1) {
-        if (i + 1 >= length) break;
-        res = rates[i + 1];
-        if (IsEngulfing(res, rates[i], dir)) return true;
-    }
-
-    return false;
-}
-
-bool IsEngulfing(MqlRates &currentCandle, MqlRates &prvCandle, bool type)
-  {
-    return currentCandle.high > prvCandle.high &&
-        currentCandle.low < prvCandle.low &&
-        Direction(currentCandle) == type &&
-        MathMax(currentCandle.open, currentCandle.close) > MathMax(prvCandle.open, prvCandle.close) &&
-        MathMin(currentCandle.open, currentCandle.close) < MathMin(prvCandle.open, prvCandle.close);
-  }
-
-bool Direction(MqlRates &rate)
-  {
-    return rate.close > rate.open;
-  }
 
 string CheckEntry(string symbol, ENUM_TIMEFRAMES _timeframe) {
     MqlRates rates[];
@@ -179,24 +184,35 @@ void ReverseArray(T &rates[]) {
     }
 }
 
-double CalculateVolume(double riskAmount, double entryPrice, double stopLoss, string symbol) {
+void CalculateVolume(double riskAmount, double entryPrice, double stopLoss, string symbol, double &volumes[]) {
+    double totalProfit = 0.0;
     double volumeMax = SymbolInfoDouble(symbol, SYMBOL_VOLUME_MAX);
     double volumeMin = SymbolInfoDouble(symbol, SYMBOL_VOLUME_MIN);
-    double volume = volumeMin;
     double lotStep = SymbolInfoDouble(symbol, SYMBOL_VOLUME_STEP);
-    double profit = 0.0;
     int decimalPlaces = GetDecimalPlaces(lotStep);
+    int maxIterations = 1000;
+    int iterations = 0;
+    
+    while (totalProfit < riskAmount && iterations < maxIterations) {
+        double volume = volumeMin;
+        double profit = 0.0;
+        int _maxIterations = 1000;
+        int _iterations = 0;
 
-    int counter = 0;
-    while (OrderCalcProfit(ORDER_TYPE_BUY, symbol, volume, MathMin(entryPrice, stopLoss), MathMax(entryPrice, stopLoss), profit) && profit < riskAmount && volume < volumeMax) {
-        volume += lotStep;
+    
+        while (OrderCalcProfit(ORDER_TYPE_BUY, symbol, volume, MathMin(entryPrice, stopLoss), MathMax(entryPrice, stopLoss), profit) && profit < (riskAmount - totalProfit) && volume < volumeMax && _iterations < _maxIterations) {
+            volume += lotStep;
+            _iterations += 1;
+        }
+        
+        if (profit > (riskAmount - totalProfit)) {
+            volume = volume - lotStep;
+        }
+
+        AddToList(volumes, MathMin(volumeMax, NormalizeDouble(volume, decimalPlaces)));
+        totalProfit += profit;
+        iterations += 1;
     }
-
-    if (profit > riskAmount) {
-        volume = volume - lotStep;
-    }
-
-    return MathMin(volumeMax, NormalizeDouble(volume, decimalPlaces));
 }
 
 int GetDecimalPlaces (double number) {
@@ -204,9 +220,14 @@ int GetDecimalPlaces (double number) {
     while (NormalizeDouble(number, decimalPlaces) != number && decimalPlaces < 15) {
         decimalPlaces += 1;
     }
-    
 
     return decimalPlaces;
+}
+
+template<typename T>
+void AddToList(T &list[], T item) {
+    ArrayResize(list, ArraySize(list) + 1);
+    list[ArraySize(list) - 1] = item;
 }
 
 void CloseAllPositions() {
@@ -215,6 +236,20 @@ void CloseAllPositions() {
             trade.PositionClose(PositionGetInteger(POSITION_TICKET));
         }
     }
+    if (_PositionsTotal() > 0) {
+        CloseAllPositions();
+    }
+}
+
+int _PositionsTotal() {
+    int count = 0;
+    for (int i = 0; i <= PositionsTotal(); i += 1) {
+        if (PositionGetSymbol(i) != "" && PositionGetString(POSITION_COMMENT) == tradeComment) {
+            count += 1;
+        }
+    }
+
+    return count;
 }
 
 
@@ -226,6 +261,7 @@ bool IsInTradingWindow() {
 }
 
 bool IsSymbolInUse(string symbol) {
+    return false;
     for(int i = 0; i <= PositionsTotal(); i += 1)
     {
         if(PositionGetSymbol(i) == symbol && PositionGetString(POSITION_COMMENT) == tradeComment)
@@ -248,8 +284,30 @@ bool IsSymbolInUse(string symbol) {
 void ManageBalance() {
     double equity = AccountInfoDouble(ACCOUNT_EQUITY);
     if (equity - startingBalance >= TargetAmount) {
-        startingBalance += TargetAmount;
         CloseAllPositions();
+        startingBalance = AccountInfoDouble(ACCOUNT_BALANCE);
         SendNotification(tradeComment + " Target Hit!");
+        if (StopAtTargetHit) {
+            canTrade = false;
+        }
     }
+}
+
+int GetRandomNumber(int maxNumber) {
+    MathSrand(GetTickCount());
+
+    return 1 + MathRand() % maxNumber;
+}
+
+int delay = 0;
+bool CanTrade() {
+    // if (delay <= 0) {
+        
+    //     delay = ArraySize(symbols) * GetRandomNumber(10);
+
+    //     return true;
+    // }
+
+    // delay -= 1;
+    return MathRand() % 2 == 0;
 }

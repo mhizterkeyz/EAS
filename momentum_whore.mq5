@@ -11,20 +11,18 @@ input int AverageLookupCount = 10;
 input int MomentumMultiplier = 2;
 input double RR = 3;
 input double RiskAmount = 100;
+input string Symbols = "XAUUSD,EURJPY,BTCUSD";
 
 CTrade Trade;
 string TradeComment = "MOMENTUM WHORE";
 datetime PreviousTime;
-string Symbols[] = {
-   "XAUUSD",
-   "EURJPY",
-   "BTCUSD"
-};
+string _Symbols[];
 
 
 int OnInit() {
    SendNotification(TradeComment + " Loaded!");
    PreviousTime = iTime(_Symbol, TimeFrame, 0);
+   StringSplit(Symbols, ',', _Symbols);
    return(INIT_SUCCEEDED);
 }
 
@@ -32,8 +30,8 @@ void OnTick() {
     if (iTime(_Symbol, TimeFrame, 0) != PreviousTime) {
         PreviousTime = iTime(_Symbol, TimeFrame, 0);
 
-        for (int i = 0; i < ArraySize(Symbols); i++) {
-            string symbol = Symbols[i];
+        for (int i = 0; i < ArraySize(_Symbols); i++) {
+            string symbol = _Symbols[i];
             if (!IsSymbolInUse(symbol)) {
                 Signal signal = GetSignal(symbol, TimeFrame);
                 if (signal.successful) {
@@ -100,7 +98,9 @@ Signal GetSignal(string symbol, ENUM_TIMEFRAMES timeframe) {
     double averageMomentum = GetAverageMomentum(symbol, timeframe);
     signal.successful = false;
     bool isMomentumCandle = (lastCandle.high - lastCandle.low) >= (MomentumMultiplier * averageMomentum);
-    bool candleHasSizeableBody = MathAbs(lastCandle.open - lastCandle.close) > 0.5 * (lastCandle.high - lastCandle.low);
+    long spread = SymbolInfoInteger(symbol, SYMBOL_SPREAD);
+    double points = SymbolInfoDouble(symbol, SYMBOL_POINT);
+    bool candleHasSizeableBody = MathAbs(lastCandle.open - lastCandle.close) > spread * points * 70;
     if (isMomentumCandle && candleHasSizeableBody) {
 
         signal.lastCandle = lastCandle;

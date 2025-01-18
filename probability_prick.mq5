@@ -16,7 +16,12 @@ input string Symbols = "XAUUSD,EURJPY,BTCUSD";
 CTrade Trade;
 string TradeComment = "PROBABILITY PRICK";
 datetime PreviousTime;
+datetime DayTracker;
 string _Symbols[];
+int TradeCount = 0;
+int MaxTrades = 1;
+input int TradingHoursStart = 22;
+input int TradingHoursEnd = 4;
 
 
 int OnInit() {
@@ -27,7 +32,12 @@ int OnInit() {
 }
 
 void OnTick() {
-    if (iTime(_Symbol, TimeFrame, 0) != PreviousTime) {
+    if (iTime(_Symbol, PERIOD_D1, 0) != DayTracker) {
+        DayTracker = iTime(_Symbol, PERIOD_D1, 0);
+        TradeCount = 0;
+    }
+
+    if (iTime(_Symbol, TimeFrame, 0) != PreviousTime && TradeCount < MaxTrades && IsInTradingWindow()) {
         PreviousTime = iTime(_Symbol, TimeFrame, 0);
 
         for (int i = 0; i < ArraySize(_Symbols); i++) {
@@ -36,6 +46,7 @@ void OnTick() {
                 Signal signal = GetSignal(symbol, TimeFrame);
                 if (signal.successful) {
                     if (signal.type == "buy") {
+                        TradeCount += 1;
                         Buy(symbol, signal.lastCandle);
                         Print("Momentum Candle High: ", signal.lastCandle.high);
                     }
@@ -226,4 +237,11 @@ void ManageTrades() {
             }
         }
     }
+}
+
+bool IsInTradingWindow() {
+    MqlDateTime currentTime;
+    TimeToStruct(TimeGMT(), currentTime);
+
+    return currentTime.hour >= TradingHoursStart || currentTime.hour <= TradingHoursEnd;
 }
