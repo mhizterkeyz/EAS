@@ -1,0 +1,536 @@
+#include <Trade\Trade.mqh>
+
+CTrade Trade;
+string TradeComment = "MA_Crossover_EA";
+input double RR = 2.0; // Risk-to-reward ratio
+input double LotSize = 0.001; // Lot size per trade
+input double RiskPercent = 1.0; // Risk percentage per trade
+input double RiskAmount = 200; // Amount to risk per trade
+double lastTradePrice = 0; // Store last trade price to avoid duplicate signals
+string lastTradeDirection = ""; // Track last trade direction
+datetime lastHealthCheck = 0; // Track last health check time
+input bool TurnOffBuys = false; // Turn off buy trades
+input bool TurnOffSells = false; // Turn off sell trades
+datetime lastTimeInTF = 0;
+double averageRedCandles = 0;
+string tokens[];
+double startingBalance = 0.0;
+datetime lastRecordedMonth = 0;
+input double monthlyTarget = 1000; // Target each month
+input double maxLoss = 5; // Loss target each month
+bool stopTrading = false;
+
+struct Signal {
+  double stopLoss;
+  double price;
+  int signal;
+};
+
+// Function to calculate moving average
+double GetMA(int period) {
+    double maBuffer[];
+    if (CopyBuffer(iMA(_Symbol, PERIOD_CURRENT, period, 0, MODE_SMA, PRICE_CLOSE), 0, 1, 1, maBuffer) > 0) {
+        return maBuffer[0];
+    }
+    return 0;
+}
+
+double GetATR(int period) {
+    double atrBuffer[];
+    if (CopyBuffer(iATR(_Symbol, PERIOD_CURRENT, period), 0, 1, 1, atrBuffer) > 0) {
+        return atrBuffer[0];
+    }
+    return 0;
+}
+
+// Function to check if a position is already open
+bool HasOpenPosition() {
+    for (int i = PositionsTotal() - 1; i >= 0; i--) {
+        if (PositionSelectByTicket(PositionGetTicket(i)) && PositionGetString(POSITION_SYMBOL) == _Symbol && PositionGetString(POSITION_COMMENT) == TradeComment) {
+            return true;
+        }
+    }
+    return false;
+}
+
+// Function to execute trades
+void ExecuteTrade(string direction, double entryPrice, double stopLoss) {
+    if (HasOpenPosition() || (direction == lastTradeDirection)) return; // Ensure only one position is open & avoid duplicate signals
+    
+    double takeProfit = entryPrice + (fabs(entryPrice - stopLoss) * RR * ((direction == "BUY") ? 1 : -1));
+    double lotSize = LotSize; // Default lot size, can be adjusted
+    
+    if (direction == "BUY") {
+        Trade.Buy(lotSize, _Symbol, entryPrice, stopLoss, takeProfit, TradeComment);
+    } else {
+        Trade.Sell(lotSize, _Symbol, entryPrice, stopLoss, takeProfit, TradeComment);
+    }
+    
+    lastTradePrice = entryPrice; // Store last trade price to prevent duplicate entries
+    lastTradeDirection = direction; // Track last trade direction
+}
+
+void ExecuteTradeV1(string direction, double entryPrice, double stopLoss) {
+    if (HasOpenPosition() || (direction == lastTradeDirection)) return; // Ensure only one position is open & avoid duplicate signals
+    
+    double volumes[];
+    double takeProfit = entryPrice + (fabs(entryPrice - stopLoss) * RR * ((direction == "BUY") ? 1 : -1));
+    if (!CalculateVolume(entryPrice, stopLoss, _Symbol, volumes)) {
+        Print("Error: Unable to calculate volume for trade");
+        return;
+    }
+    double lotSize = volumes[0];
+    
+    if (direction == "BUY" && !TurnOffBuys) {
+        if (Trade.Buy(lotSize, _Symbol, entryPrice, stopLoss, takeProfit, TradeComment))  SendNotification("Buy trade entered on " + _Symbol);
+    } else if (direction == "SELL" && !TurnOffSells) {
+        if (Trade.Sell(lotSize, _Symbol, entryPrice, stopLoss, takeProfit, TradeComment)) SendNotification("Sell trade entered on " + _Symbol);
+    }
+    
+    lastTradePrice = entryPrice; // Store last trade price to prevent duplicate entries
+    lastTradeDirection = direction; // Track last trade direction
+}
+
+bool CalculateVolume(const double entryPrice, const double stopLoss, const string symbol, double &volumes[], double riskAmount = DBL_MAX) {
+    // Determine the actual risk amount
+    double calculatedRiskAmount = (riskAmount == DBL_MAX) ? (AccountInfoDouble(ACCOUNT_BALANCE) * RiskPercent) / 100.0 : riskAmount;
+    // Validate input parameters
+    if (calculatedRiskAmount <= 0 || entryPrice <= 0 || symbol == "") {
+        Print("Error: Invalid input parameters for volume calculation");
+        return false;
+    }
+
+    // Retrieve symbol trading constraints
+    double volumeMax = SymbolInfoDouble(symbol, SYMBOL_VOLUME_MAX);
+    double volumeMin = SymbolInfoDouble(symbol, SYMBOL_VOLUME_MIN);
+    double lotStep = SymbolInfoDouble(symbol, SYMBOL_VOLUME_STEP);
+
+    // Validate symbol information
+    if (volumeMax <= 0 || lotStep <= 0) {
+        Print("Error: Unable to retrieve valid symbol volume constraints");
+        return false;
+    }
+
+    // Calculate point difference
+    double entryPointPrice = MathMin(entryPrice, stopLoss);
+    double stopPointPrice = MathMax(entryPrice, stopLoss);
+    double pointDifference = MathAbs(entryPointPrice - stopPointPrice);
+
+    // Prevent division by zero
+    if (pointDifference == 0) {
+        Print("Error: Entry and stop loss prices are identical");
+        return false;
+    }
+
+    // Reset output array
+    ArrayFree(volumes);
+
+    double totalProfit = 0.0;
+    int decimalPlaces = GetDecimalPlaces(lotStep);
+    int iterationCount = 0;
+    
+    while (totalProfit < calculatedRiskAmount) {
+        double volume = volumeMin;
+        double currentProfit = 0.0;
+        
+        // Find optimal volume that approaches but doesn't exceed risk amount
+        while (true) {
+            // Check for potential OrderCalcProfit errors
+            if (!OrderCalcProfit(ORDER_TYPE_BUY, symbol, volume, entryPointPrice, stopPointPrice, currentProfit)) {
+                Print("Error calculating profit for volume: ", volume);
+                break;
+            }
+
+            // Check if current volume exceeds remaining risk or max volume
+            if (currentProfit > (calculatedRiskAmount - totalProfit) || volume >= volumeMax) {
+                // Step back to previous volume if we've gone too far
+                volume = MathMax(volumeMin, volume - lotStep);
+                break;
+            }
+
+            // Increment volume by lot step
+            volume = NormalizeDouble(volume + lotStep, decimalPlaces);
+        }
+
+        // Verify profit and volume before adding
+        if (currentProfit > 0 && volume >= volumeMin) {
+            AddToList(volumes, volume);
+            totalProfit += currentProfit;
+        } else {
+            // If we can't find a suitable volume, exit to prevent infinite loop
+            break;
+        }
+
+        // Safeguard against potential infinite loop
+        iterationCount++;
+        if (iterationCount > 100) {
+            Print("Warning: Maximum iteration limit reached");
+            break;
+        }
+    }
+
+    return ArraySize(volumes) > 0;
+}
+
+// Utility function to add to dynamic array
+void AddToList(double &arr[], double value) {
+    int size = ArraySize(arr);
+    ArrayResize(arr, size + 1);
+    arr[size] = value;
+}
+
+// Determine decimal places for precise volume normalization
+int GetDecimalPlaces(double value) {
+    int places = 0;
+    while (MathMod(value * MathPow(10, places), 1) != 0 && places < 8) {
+        places++;
+    }
+    return places;
+}
+
+Signal GetSignal() {
+    double price = iClose(_Symbol, PERIOD_CURRENT, 0);
+    double ma50 = GetMA(50);
+    double ma100 = GetMA(100);
+    Signal signal = {0, 0, 0};
+
+    if (ma50 == 0 || ma100 == 0) return signal;
+
+    double priceTo100MA = fabs(price - ma100);
+    double ma50To100MA = fabs(ma50 - ma100);
+    double stopLossDistance = ma50To100MA * 2;
+
+    if (ma50 < ma100 && price > ma50 && price > ma100 && priceTo100MA >= ma50To100MA) {
+        signal.stopLoss = price + stopLossDistance;
+        signal.price = price;
+        signal.signal = -1;
+    } else if (ma50 > ma100 && price < ma50 && price < ma100 && priceTo100MA >= ma50To100MA) {
+        signal.stopLoss = price - stopLossDistance;
+        signal.price = price;
+        signal.signal = 1;
+    }
+
+    return signal;
+}
+
+Signal GetSignalV1() {
+    double price = iClose(_Symbol, PERIOD_CURRENT, 0);
+    double ma50 = GetMA(50);
+    double ma100 = GetMA(100);
+    Signal signal = {0, 0, 0};
+
+    if (ma50 == 0 || ma100 == 0) return signal;
+
+    if (ma50 < ma100 && price > ma50 && price > ma100) {
+        signal.stopLoss = price - 3 * GetATR(14);
+        signal.price = price;
+        signal.signal = 1;
+    } else if (ma50 > ma100 && price < ma50 && price < ma100) {
+        signal.stopLoss = price + 3 * GetATR(14);
+        signal.price = price;
+        signal.signal = -1;
+    }
+
+
+    return signal;
+}
+
+int OnInit() {
+    SendNotification("EA Loaded: " + TradeComment + " is now active on " + _Symbol + " " + EnumToString((ENUM_TIMEFRAMES)ChartPeriod(0)));
+    startingBalance = AccountInfoDouble(ACCOUNT_BALANCE);
+    return INIT_SUCCEEDED;
+}
+
+int CheckMA100Position()
+{
+    int handle = iMA(_Symbol, PERIOD_M5, 100, 0, MODE_SMA, PRICE_CLOSE);
+    double hundred_values[];
+
+    CopyBuffer(handle, 0, 0, 1, hundred_values);
+
+    double bidPrice = SymbolInfoDouble(_Symbol, SYMBOL_BID);
+    
+    if (hundred_values[0] < bidPrice)
+        return 1;
+    else if (hundred_values[0] > bidPrice)
+        return -1;
+    else
+        return 0;
+}
+
+double GetAverageRedCandles(int period)
+{
+    if (CheckMA100Position() != 1) return 0.0;
+
+    int totalRedSequences = 0;
+    int redCandleCount = 0;
+    int sequenceCount = 0;
+    
+    for (int i = period; i >= 1; i--) // Loop through the given period
+    {
+        if (iClose(_Symbol, PERIOD_CURRENT, i) < iOpen(_Symbol, PERIOD_CURRENT, i)) // Check if it's a red candle
+        {
+            redCandleCount++;
+        }
+        else
+        {
+            if (redCandleCount > 0)
+            {
+                totalRedSequences += redCandleCount;
+                sequenceCount++;
+                redCandleCount = 0; // Reset count after a bullish candle
+            }
+        }
+    }
+    
+    if (sequenceCount == 0) return 0; // Avoid division by zero
+    return (double)totalRedSequences / sequenceCount; // Return the average
+}
+
+void _OnTick() {
+    if (lastTimeInTF == iTime(_Symbol, PERIOD_CURRENT, 0)) return;
+
+    lastTimeInTF = iTime(_Symbol, PERIOD_CURRENT, 0);
+
+    Signal signal = GetSignalV1();
+    if (signal.signal == 1) {
+        ExecuteTradeV1("BUY", signal.price, signal.stopLoss);
+    } else if (signal.signal == -1) {
+        ExecuteTradeV1("SELL", signal.price, signal.stopLoss);
+    }
+
+    // Send health check notification every hour
+    datetime currentTime = TimeCurrent();
+    if (currentTime - lastHealthCheck >= 3600) { // 3600 seconds = 1 hour
+        SendNotification("Health Check: EA is running smoothly on " + _Symbol + " " + EnumToString((ENUM_TIMEFRAMES)ChartPeriod(0)));
+        lastHealthCheck = currentTime;
+    }
+}
+
+void __OnTick() {
+    int period = 1000;
+    Comment("Average red candles: " + (string)averageRedCandles);
+
+    if (lastTimeInTF == iTime(_Symbol, PERIOD_CURRENT, 0)) return;
+
+    lastTimeInTF = iTime(_Symbol, PERIOD_CURRENT, 0);
+    
+
+    if (PositionsTotal() > 0) {
+        double _averageRedCandles = averageRedCandles;
+        int consecutiveReds  = 0;
+        for (int i = 1; i < _averageRedCandles + 2; i++) {
+            if (consecutiveReds >= _averageRedCandles) break;
+
+            if (iClose(_Symbol, PERIOD_CURRENT, i) < iOpen(_Symbol, PERIOD_CURRENT, i)) consecutiveReds += 1;
+            else break;
+        }
+
+        for (int i = 0; i < PositionsTotal(); i++) {
+            if (!PositionSelectByTicket(PositionGetTicket(i)) || PositionGetString(POSITION_COMMENT) != TradeComment) {
+                continue;
+            }
+
+            if (consecutiveReds >= _averageRedCandles || (SymbolInfoDouble(_Symbol, SYMBOL_BID) > PositionGetDouble(POSITION_PRICE_OPEN))) {
+                Trade.PositionClose(PositionGetTicket(i));
+            }
+        }
+
+
+        return;
+    }
+
+    bool lastCandleIsBullish = iOpen(_Symbol, PERIOD_CURRENT, 1) < iClose(_Symbol, PERIOD_CURRENT, 1);
+
+    if (lastCandleIsBullish) {
+        averageRedCandles = GetAverageRedCandles(period);
+        if (averageRedCandles >= 20) {
+            averageRedCandles = 5;
+            Trade.Sell(SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MIN), _Symbol, 0, 0, 0, TradeComment);
+        }
+    }
+}
+
+void ___OnTick() {
+    int period = 1000;
+    Comment("Average red candles: " + (string)averageRedCandles);
+
+    if (lastTimeInTF == iTime(_Symbol, PERIOD_CURRENT, 0)) return;
+
+    lastTimeInTF = iTime(_Symbol, PERIOD_CURRENT, 0);
+
+    if (PositionsTotal() > 0) {
+        double _averageRedCandles = averageRedCandles;
+        int consecutiveReds  = 0;
+        for (int i = 1; i < _averageRedCandles + 2; i++) {
+            if (consecutiveReds >= _averageRedCandles) break;
+
+            if (iClose(_Symbol, PERIOD_CURRENT, i) < iOpen(_Symbol, PERIOD_CURRENT, i)) consecutiveReds += 1;
+            else break;
+        }
+
+        for (int i = 0; i < PositionsTotal(); i++) {
+            if (!PositionSelectByTicket(PositionGetTicket(i)) || PositionGetString(POSITION_COMMENT) != TradeComment) {
+                continue;
+            }
+
+            if (consecutiveReds >= _averageRedCandles || (SymbolInfoDouble(_Symbol, SYMBOL_BID) > PositionGetDouble(POSITION_PRICE_OPEN))) {
+                Trade.PositionClose(PositionGetTicket(i));
+            }
+        }
+
+
+        return;
+    }
+    
+
+    if (averageRedCandles > 0) {
+        double _averageRedCandles = averageRedCandles;
+        int consecutiveReds  = 0;
+        for (int i = 1; i < _averageRedCandles + 2; i++) {
+            if (consecutiveReds >= _averageRedCandles) break;
+
+            if (iClose(_Symbol, PERIOD_CURRENT, i) < iOpen(_Symbol, PERIOD_CURRENT, i)) consecutiveReds += 1;
+            else break;
+        }
+
+        if (consecutiveReds >= _averageRedCandles) {
+            Trade.Buy(SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MIN), _Symbol, 0, 0, 0, TradeComment);
+        }
+
+        return;
+    }
+
+    bool lastCandleIsBullish = iOpen(_Symbol, PERIOD_CURRENT, 1) < iClose(_Symbol, PERIOD_CURRENT, 1);
+
+    if (lastCandleIsBullish) {
+        double val = GetAverageRedCandles(period) / 2;
+        if (val >= 5) averageRedCandles = val;
+        // if (averageRedCandles >= 5) {
+        //     Trade.Buy(SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MIN), _Symbol, 0, 0, 0, TradeComment);
+        // }
+    }
+}
+
+string TokenCandleAtIndex(int index)
+{
+    double open = iOpen(_Symbol, PERIOD_CURRENT, index);
+    double close = iClose(_Symbol, PERIOD_CURRENT, index);
+    double high = iHigh(_Symbol, PERIOD_CURRENT, index);
+    double low = iLow(_Symbol, PERIOD_CURRENT, index);
+    datetime time = iTime(_Symbol, PERIOD_CURRENT, index);
+
+    string token = StringFormat("O:%.5f,C:%.5f,H:%.5f,L:%.5f,T:%s", open, close, high, low, TimeToString(time, TIME_DATE | TIME_MINUTES));
+    return token;
+}
+
+bool TokenExists(string token)
+{
+    for (int i = 0; i < ArraySize(tokens); i++) {
+        if (tokens[i] == token) return true;
+    }
+
+    return false;
+}
+
+void CheckMonthlyBalanceTarget(double targetAmount) {
+    datetime currentMonth = iTime(_Symbol, PERIOD_MN1, 0);
+
+    if (currentMonth != lastRecordedMonth) {
+        startingBalance = AccountInfoDouble(ACCOUNT_EQUITY);
+        lastRecordedMonth = currentMonth;
+        stopTrading = false;
+    }
+
+    double currentEquity = AccountInfoDouble(ACCOUNT_EQUITY);
+    double totalFunds = currentEquity - startingBalance;
+
+    if (totalFunds >= targetAmount) {
+        Print("Target hit for month, totalFunds: ", totalFunds, " targetAmount: ", targetAmount);
+        stopTrading = true;
+    }
+}
+
+int CountMonthlyLosses() {
+    // Get the current time and extract the year and month
+    MqlDateTime timeStruct;
+    TimeCurrent(timeStruct);
+    int currentYear = timeStruct.year;
+    int currentMonth = timeStruct.mon;
+
+    // Determine the start of the current month
+    datetime monthStart = D'1970.01.01 00:00:00';  // Default initialization
+    TimeToStruct(TimeCurrent(), timeStruct);
+    timeStruct.day = 1;    // Set to first day of the month
+    timeStruct.hour = 0;
+    timeStruct.min = 0;
+    timeStruct.sec = 0;
+    monthStart = StructToTime(timeStruct);
+
+    // Select trade history from the start of the current month
+    if (!HistorySelect(monthStart, TimeCurrent())) {
+        Print("Error selecting trade history.");
+        return -1;
+    }
+
+    int lossCount = 0;
+
+    // Loop through trade history and count losses
+    for (int i = 0; i < HistoryDealsTotal(); i++) {
+        ulong ticket = HistoryDealGetTicket(i);
+        double profit = HistoryDealGetDouble(ticket, DEAL_PROFIT);
+
+        // Check if the trade was a loss
+        if (profit < 0) {
+            lossCount++;
+        }
+    }
+
+    Print("Number of losing trades this month: ", lossCount);
+    return lossCount;
+}
+
+
+void OnTick()
+{
+    if (lastTimeInTF == iTime(_Symbol, PERIOD_CURRENT, 0)) return;
+
+    lastTimeInTF = iTime(_Symbol, PERIOD_CURRENT, 0);
+
+    // CheckMonthlyBalanceTarget(monthlyTarget);
+
+    if (stopTrading) return;
+
+    if (CountMonthlyLosses() >= maxLoss) {
+        Print("Too many losses, skipping...");
+        return;
+    }
+
+    bool hasAWick = iLow(_Symbol, PERIOD_CURRENT, 5) < iOpen(_Symbol, PERIOD_CURRENT, 5);
+    bool wickIsLongerThanBody = MathAbs(iLow(_Symbol, PERIOD_CURRENT, 5) - iOpen(_Symbol, PERIOD_CURRENT, 5)) / (iHigh(_Symbol, PERIOD_CURRENT, 5) - iLow(_Symbol, PERIOD_CURRENT, 5)) >= 0.7;
+    bool isLowerThanPast4Candles = iLow(_Symbol, PERIOD_CURRENT, 5) < iLow(_Symbol, PERIOD_CURRENT, 6) &&
+        iLow(_Symbol, PERIOD_CURRENT, 5) < iLow(_Symbol, PERIOD_CURRENT, 7) &&
+        iLow(_Symbol, PERIOD_CURRENT, 5) < iLow(_Symbol, PERIOD_CURRENT, 8) &&
+        iLow(_Symbol, PERIOD_CURRENT, 5) < iLow(_Symbol, PERIOD_CURRENT, 9);
+    bool isLowerThanSubsequent4Candles = iLow(_Symbol, PERIOD_CURRENT, 5) < iLow(_Symbol, PERIOD_CURRENT, 4) &&
+        iLow(_Symbol, PERIOD_CURRENT, 5) < iLow(_Symbol, PERIOD_CURRENT, 3) &&
+        iLow(_Symbol, PERIOD_CURRENT, 5) < iLow(_Symbol, PERIOD_CURRENT, 2) &&
+        iLow(_Symbol, PERIOD_CURRENT, 5) < iLow(_Symbol, PERIOD_CURRENT, 1);
+    bool isBullishSwing = hasAWick &&  wickIsLongerThanBody && isLowerThanPast4Candles && isLowerThanSubsequent4Candles;
+    bool priceIsAboveHigh = SymbolInfoDouble(_Symbol, SYMBOL_BID) >= iHigh(_Symbol, PERIOD_CURRENT, 5);
+
+    string token = TokenCandleAtIndex(1);
+
+    if (isBullishSwing && priceIsAboveHigh && PositionsTotal() < 1) {
+        ArrayResize(tokens, ArraySize(tokens) + 1);
+        tokens[ArraySize(tokens) - 1] = token;
+
+        double volumes[];
+        double takeProfit = SymbolInfoDouble(_Symbol, SYMBOL_ASK) + (SymbolInfoDouble(_Symbol, SYMBOL_ASK) - iLow(_Symbol, PERIOD_CURRENT, 5)) * RR;
+
+        CalculateVolume(SymbolInfoDouble(_Symbol, SYMBOL_ASK), takeProfit, _Symbol, volumes, RiskAmount);
+
+        Trade.Sell(volumes[0], _Symbol, 0, takeProfit, iLow(_Symbol, PERIOD_CURRENT, 5) + 0.1 * (iHigh(_Symbol, PERIOD_CURRENT, 5) - iLow(_Symbol, PERIOD_CURRENT, 5)), TradeComment);
+    }
+    
+}

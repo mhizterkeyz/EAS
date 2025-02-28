@@ -1,130 +1,102 @@
 #include <Trade\Trade.mqh>
 
 CTrade Trade;
+string TradeComment = "GYAAAT";
+string SymbolArray[] = {
+    "Volatility 75 Index",
+};
+datetime LastHigherTFBarTime = 0;
 
-input int TradingHoursStart = 7; // Start hour of trading
-input int TradingHoursEnd = 19;  // End hour of trading
-input double zoneSize = 60; // Size of zones in points
-input double tradeVolume = 0.01; // Lotsize per trade
+ENUM_TIMEFRAMES GetHigherTimeframe(ENUM_TIMEFRAMES lowerTimeframe) {
+    if (lowerTimeframe == PERIOD_CURRENT) {
+        lowerTimeframe = (ENUM_TIMEFRAMES)ChartPeriod(0);
+    }
 
-string TradeComment = "ZaZoneZone";
-double upperZone;
-double currentZone;
-double lowerZone;
-
-int OnInit() {
-    SetZones();
-
-    return(INIT_SUCCEEDED);
-}
-
-void OnTick() {
-    ManageTrades();
-
-    double price = SymbolInfoDouble(_Symbol, SYMBOL_BID);
-    if (price >= upperZone || price <= lowerZone) {
-        SetZones();
+    switch (lowerTimeframe) {
+        case PERIOD_M1:   return PERIOD_M30;  // M1 → M15
+        case PERIOD_M5:   return PERIOD_H4;  // M5 → M30
+        case PERIOD_M15:  return PERIOD_H4;   // M15 → H1
+        case PERIOD_M30:  return PERIOD_H4;   // M30 → H4
+        case PERIOD_H1:   return PERIOD_D1;   // H1 → D1
+        case PERIOD_H4:   return PERIOD_W1;   // H4 → W1
+        case PERIOD_D1:   return PERIOD_MN1;  // D1 → MN1
+        default:          return lowerTimeframe;
     }
 }
 
-void ManageTrades() {
-    for(int i = 0; i <= PositionsTotal(); i += 1) {
-        if(PositionGetSymbol(i) != "" && PositionGetString(POSITION_COMMENT) == TradeComment) {
-            double price = SymbolInfoDouble(_Symbol, SYMBOL_BID);
-            bool isBuyTrade = PositionGetInteger(POSITION_TYPE) == POSITION_TYPE_BUY;
-            if (
-                isBuyTrade &&
-                (
-                    price <= currentZone - ((currentZone - lowerZone) / 2) ||
-                    price >= upperZone
-                )
-            ) {
-                Trade.PositionClose(PositionGetInteger(POSITION_TICKET));
-            }
+// Function to find key support level
+double GetSupport(int lookback, string symbol, ENUM_TIMEFRAMES timeframe) {
+    return iLow(symbol, timeframe, iLowest(symbol, timeframe, MODE_LOW, lookback, 0));
+}
 
-            if (
-                !isBuyTrade &&
-                (
-                    price >= currentZone + ((upperZone - currentZone) / 2) ||
-                    price <= lowerZone
-                )
-            ) {
-                Trade.PositionClose(PositionGetInteger(POSITION_TICKET));
-            }
-        }
+// Function to find key resistance level
+double GetResistance(int lookback, string symbol, ENUM_TIMEFRAMES timeframe) {
+    return iHigh(symbol, timeframe, iHighest(symbol, timeframe, MODE_HIGH, lookback, 0));
+}
+
+// Function to draw horizontal lines
+void DrawHorizontalLine(string name, double price, color lineColor) {
+    if (ObjectFind(0, name) == -1) {
+        ObjectCreate(0, name, OBJ_HLINE, 0, 0, price);
+        ObjectSetInteger(0, name, OBJPROP_COLOR, lineColor);
+        ObjectSetInteger(0, name, OBJPROP_WIDTH, 2);
+    } else {
+        ObjectMove(0, name, 0, 0, price);
     }
 }
 
-string CheckEntry() {
-    string entry = "";
-    int i = 1;
-    while(iHigh(_Symbol, PERIOD_M1, i) < upperZone && iLow(_Symbol, PERIOD_M1, i) > lowerZone) {
-        i += 1;
-    }
-
-    if (iHigh(_Symbol, PERIOD_M1, i) >= upperZone) {
-        entry = "sell";
-    }
-
-    if (iLow(_Symbol, PERIOD_M1, i) <= lowerZone) {
-        entry = "buy";
-    }
-
-    return entry; 
-}
-
-bool IsInTradingWindow() {
-    MqlDateTime currentTime;
-    TimeToStruct(TimeGMT(), currentTime);
-
-    return currentTime.hour >= TradingHoursStart && currentTime.hour <= TradingHoursEnd;
-}
-
-void SetZones() {
-    double points = SymbolInfoDouble(_Symbol, SYMBOL_POINT);
-    double price = SymbolInfoDouble(_Symbol, SYMBOL_BID);
-    currentZone = price;
-    upperZone = currentZone + (zoneSize * points);
-    lowerZone = currentZone - (zoneSize * points);
-
-    if (IsInTradingWindow()) {
-        string entry = CheckEntry();
-
-        if (entry == "buy") {
-            Trade.Buy(tradeVolume, _Symbol, price, 0, upperZone, TradeComment);
-        }
-
-        if (entry == "sell") {
-            Trade.Sell(tradeVolume, _Symbol, price, 0, lowerZone, TradeComment);
-        }
-    }
-
-    DrawHorizontalLines(upperZone, currentZone, lowerZone);
-}
-
-void DrawHorizontalLines(double price1, double price2, double price3, color lineColor = clrRed, int lineWidth = 1)
+int OnInit()
 {
-    // Array to hold the prices
-    double prices[] = {price1, price2, price3};
+    return INIT_SUCCEEDED;
+}
+
+void OnTick()
+{
+    int lookback = 50; // Number of candles to scan for support/resistance
+    datetime LastHigherTFBarTime = iTime(_Symbol, PERIOD_CURRENT, 0);
+    ENUM_TIMEFRAMES higherTimeframe = GetHigherTimeframe(PERIOD_CURRENT);
+    int count = ArraySize(SymbolArray);
     
-    // Loop through the prices and create horizontal lines
-    for (int i = 0; i < ArraySize(prices); i++)
-    {
-        // Generate a unique name for each line
-        string lineName = "ZonesHorizontalLine_" + (string)i;
+    for (int i = 0; i < count; i++) {
+        string symbol = SymbolArray[i];
+        double support = GetSupport(lookback, symbol, higherTimeframe);
+        double resistance = GetResistance(lookback, symbol, higherTimeframe);
+        DrawHorizontalLine("SupportLine", support, clrGreen);
+        DrawHorizontalLine("ResistanceLine", resistance, clrRed);
+    }
+
+    
+    // Only update support & resistance when a new candle forms
+    if (currentBarTime != lastBarTime) {
+        lastBarTime = currentBarTime;
         
-        // Create the line object
-        if (!ObjectCreate(0, lineName, OBJ_HLINE, 0, 0, prices[i]))
-        {
-            Print("Failed to create horizontal line for price ", prices[i], ": ", GetLastError());
-            continue;
-        }
+        // Store previous support and resistance before updating
+        previousSupport = ObjectGetDouble(0, "SupportLine", OBJPROP_PRICE);
+        previousResistance = ObjectGetDouble(0, "ResistanceLine", OBJPROP_PRICE);
         
-        // Set the line's properties
-        ObjectSetInteger(0, lineName, OBJPROP_COLOR, lineColor);   // Line color
-        ObjectSetInteger(0, lineName, OBJPROP_WIDTH, lineWidth);  // Line width
-        ObjectSetInteger(0, lineName, OBJPROP_STYLE, STYLE_SOLID);// Line style
-        ObjectSetInteger(0, lineName, OBJPROP_SELECTABLE, true);  // Allow selection
-        ObjectSetInteger(0, lineName, OBJPROP_RAY_RIGHT, false);  // No extension to the right
+        double support = GetSupport(lookback);
+        double resistance = GetResistance(lookback);
+
+        // Draw fixed support and resistance lines
+        DrawHorizontalLine("SupportLine", support, clrGreen);
+        DrawHorizontalLine("ResistanceLine", resistance, clrRed);
+    }
+
+    // Detect and mark liquidity grabs using stored levels
+    if (IsLiquidityGrab()) {
+        double lastClose = iClose(_Symbol, PERIOD_CURRENT, 1);
+        MarkLiquidityGrab("LiquidityGrabLine", lastClose, clrBlue);
+        Print("Liquidity Grab Detected at: ", lastClose, " with High Volume Confirmation");
+    }
+    
+    // Detect and display market structure
+    string marketStructure = GetMarketStructure(lookback);
+    Comment("Market Structure: " + marketStructure);
+
+    if (marketStructure == "Uptrend" && IsLiquidityGrab() && !HasOpenPosition("BUY")) {
+        ExecuteTrade("BUY");
+    }
+    if (marketStructure == "Downtrend" && IsLiquidityGrab() && !HasOpenPosition("SELL")) {
+        ExecuteTrade("SELL");
     }
 }
