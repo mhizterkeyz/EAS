@@ -8,6 +8,7 @@ input double riskAmountPerTrade = 200; // Risk amount per trade
 input double dailyNumberOfTrades = 3; // Daily number of trades
 input int bias = 0; // Bias, 0 = neutral, 1 = bullish, 2 = bearish
 input int winsToRecover = 3; // Number of successful trades before doubling risk
+input double slMultiplier = 3.3; // SL multiplier
 
 
 double startingBalance;
@@ -39,8 +40,12 @@ int OnInit() {
 void OnTick() {
     // Check for closed positions and adjust risk accordingly
     CheckClosedPositions();
+
+    double currentPrice = iClose(_Symbol, PERIOD_CURRENT, 0);
+    double diffBetweenCurrentPriceAndHighestPoint = highestPoint - currentPrice;
+    double diffBetweenCurrentPriceAndLowestPoint = currentPrice - lowestPoint;
     
-    Comment("hasOpenPositions: " + (string)hasOpenPositions() + "\ncanTrade: " + (string)canTrade() + "\nCurrent Risk: " + DoubleToString(currentRiskAmount, 2) + "\nConsecutive Wins: " + (string)consecutiveWins);
+    Comment("hasOpenPositions: " + (string)hasOpenPositions() + "\ncanTrade: " + (string)canTrade() + "\nCurrent Risk: " + DoubleToString(currentRiskAmount, 2) + "\nConsecutive Wins: " + (string)consecutiveWins + "\nDiff Between Current Price And Highest Point: " + DoubleToString(diffBetweenCurrentPriceAndHighestPoint) + "\nDiff Between Current Price And Lowest Point: " + DoubleToString(diffBetweenCurrentPriceAndLowestPoint));
 
     if (hasOpenPositions()) {
         updateHighestAndLowestPoints();
@@ -60,22 +65,11 @@ void OnTick() {
         return;
     }
 
-    static datetime currentTime = iTime(Symbol(), PERIOD_CURRENT, 0);
-    if (currentTime == iTime(Symbol(), PERIOD_CURRENT, 0)) {
-        return;
-    }
-
-    currentTime = iTime(Symbol(), PERIOD_CURRENT, 0);
-
-    double currentPrice = iClose(_Symbol, PERIOD_CURRENT, 0);
-    double diffBetweenCurrentPriceAndHighestPoint = highestPoint - currentPrice;
-    double diffBetweenCurrentPriceAndLowestPoint = currentPrice - lowestPoint;
 
 
-
-    if (diffBetweenCurrentPriceAndHighestPoint > 0 && bias != 2) {
+    if (diffBetweenCurrentPriceAndHighestPoint > minimumTradeSize && bias != 2) {
         Buy();
-    } else if (diffBetweenCurrentPriceAndLowestPoint > 0 && bias != 1) {
+    } else if (diffBetweenCurrentPriceAndLowestPoint > minimumTradeSize && bias != 1) {
         Sell();
     }
 
@@ -179,7 +173,7 @@ void Buy() {
     
     // Set TP and SL based on TP distance
     double tp = entryPrice + tpDistance;
-    double sl = entryPrice - (tpDistance * 3);  // SL is 3x TP distance below entry
+    double sl = entryPrice - (tpDistance * slMultiplier);  // SL is 3x TP distance below entry
     double volumes[];
     CalculateVolume(currentRiskAmount, entryPrice, sl, _Symbol, volumes);
 
@@ -214,7 +208,7 @@ void Sell() {
     
     // Set TP and SL based on TP distance
     double tp = entryPrice - tpDistance;
-    double sl = entryPrice + (tpDistance * 3);  // SL is 3x TP distance above entry
+    double sl = entryPrice + (tpDistance * slMultiplier);  // SL is 3x TP distance above entry
     double volumes[];
     CalculateVolume(currentRiskAmount, entryPrice, sl, _Symbol, volumes);
     
