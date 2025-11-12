@@ -1,3 +1,4 @@
+// 3_10_25.mq5
 #include <Trade\Trade.mqh>
 
 input uint Bias = 0; // Bias, 0 = neutral, 1 = bullish, 2 = bearish

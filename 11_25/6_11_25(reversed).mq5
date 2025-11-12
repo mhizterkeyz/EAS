@@ -1,77 +1,58 @@
-// 2_11_25.mq5
+// 6_11_25(reversed).mq5
 #include <Trade\Trade.mqh>
-
 CTrade Trade;
 
-input double maximumTradeSize = 30; // Maximum trade size in points
-input double minimumTradeSize = 10; // Minimum trade size in points
-input double riskAmountPerTrade = 200; // Risk amount per trade
 input double dailyNumberOfTrades = 3; // Daily number of trades
 input int bias = 0; // Bias, 0 = neutral, 1 = bullish, 2 = bearish
-input int winsToRecover = 3; // Number of successful trades before doubling risk
-input double slMultiplier = 3.3; // SL multiplier
+input double minimumTradeSize = 3; // Minimum trade size in points
+input double tpMultiplier = 3; // TP multiplier
+input double riskAmountPerTrade = 111; // Risk amount per trade
+input int maxProfitTrades = 0; // Max profit trades per day (0 = unlimited)
+input int maxLossTrades = 0; // Max loss trades per day (0 = unlimited)
 
-
-double startingBalance;
 double highestPoint;
 double lowestPoint;
+double startingBalance;
 int tradesCount = 0;
-double lastPointTraded;
-
-// Dynamic risk management variables
-double originalRiskAmount;
-double currentRiskAmount;
-int consecutiveWins = 0;
+double lastLowestPointTraded;
+double lastHighestPointTraded;
+int profitTradesCount = 0;
+int lossTradesCount = 0;
 ulong trackedTickets[]; // Track open positions to detect closures
 
 int OnInit() {
-    startingBalance = startingBalance = AccountInfoDouble(ACCOUNT_BALANCE);
+    startingBalance = AccountInfoDouble(ACCOUNT_BALANCE);
     highestPoint = DBL_MIN;
     lowestPoint = DBL_MAX;
-    
-    // Initialize risk management
-    originalRiskAmount = riskAmountPerTrade;
-    currentRiskAmount = riskAmountPerTrade;
-    consecutiveWins = 0;
+    profitTradesCount = 0;
+    lossTradesCount = 0;
+    tradesCount = 0;
+    lastLowestPointTraded = 0;
+    lastHighestPointTraded = 0;
     ArrayResize(trackedTickets, 0);
-
     return(INIT_SUCCEEDED);
 }
 
 void OnTick() {
-    // Check for closed positions and adjust risk accordingly
+    // Check for closed positions and update profit/loss counters
     CheckClosedPositions();
-
+    
     double currentPrice = iClose(_Symbol, PERIOD_CURRENT, 0);
     double diffBetweenCurrentPriceAndHighestPoint = highestPoint - currentPrice;
     double diffBetweenCurrentPriceAndLowestPoint = currentPrice - lowestPoint;
     
-    Comment("hasOpenPositions: " + (string)hasOpenPositions() + "\ncanTrade: " + (string)canTrade() + "\nCurrent Risk: " + DoubleToString(currentRiskAmount, 2) + "\nConsecutive Wins: " + (string)consecutiveWins + "\nDiff Between Current Price And Highest Point: " + DoubleToString(diffBetweenCurrentPriceAndHighestPoint) + "\nDiff Between Current Price And Lowest Point: " + DoubleToString(diffBetweenCurrentPriceAndLowestPoint));
+    Comment("CanBuy: " + (string)!hasOpenPositions(true) + "\nCanSell: " + (string)!hasOpenPositions(false) + "\ncanTrade: " + (string)canTrade() + "\nCurrent Risk: " + DoubleToString(riskAmountPerTrade, 2) + "\nDiff Between Current Price And Highest Point: " + DoubleToString(diffBetweenCurrentPriceAndHighestPoint) + "\nDiff Between Current Price And Lowest Point: " + DoubleToString(diffBetweenCurrentPriceAndLowestPoint) + "\nHighest Point: " + DoubleToString(highestPoint) + "\nLowest Point: " + DoubleToString(lowestPoint) + "\nMinimum Trade Size: " + DoubleToString(minimumTradeSize) + "\nProfit Trades: " + (string)profitTradesCount + "\nLoss Trades: " + (string)lossTradesCount);
 
-    if (hasOpenPositions()) {
-        updateHighestAndLowestPoints();
-
-        DrawHorizontalLine("Highest Point", highestPoint, clrGreen);
-        DrawHorizontalLine("Lowest Point", lowestPoint, clrRed);
-        
+    if (PositionsTotal() > 0) {
         return;
     }
 
-    if (!canTrade()) {
-        updateHighestAndLowestPoints();
-
-        DrawHorizontalLine("Highest Point", highestPoint, clrGreen);
-        DrawHorizontalLine("Lowest Point", lowestPoint, clrRed);
-
-        return;
-    }
-
-
-
-    if (diffBetweenCurrentPriceAndHighestPoint > minimumTradeSize && bias != 2) {
-        Buy();
-    } else if (diffBetweenCurrentPriceAndLowestPoint > minimumTradeSize && bias != 1) {
+    if (bias != 2 && diffBetweenCurrentPriceAndLowestPoint >= minimumTradeSize && !hasOpenPositions(true) && canTrade()) {
         Sell();
+    }
+
+    if (bias != 1 && diffBetweenCurrentPriceAndHighestPoint >= minimumTradeSize && !hasOpenPositions(false) && canTrade()) {
+        Buy();
     }
 
     updateHighestAndLowestPoints();
@@ -80,12 +61,51 @@ void OnTick() {
     DrawHorizontalLine("Lowest Point", lowestPoint, clrRed);
 }
 
-bool hasOpenPositions() {
-
+bool hasOpenPositions(bool isBuy = true) {
     for (int i = 0; i < PositionsTotal(); i++) {
-        if (PositionGetSymbol(i) == _Symbol) {
-            return true;
+        ulong ticket = PositionGetTicket(i);
+        if (ticket > 0 && PositionSelectByTicket(ticket)) {
+            if (PositionGetString(POSITION_SYMBOL) == _Symbol) {
+                ENUM_POSITION_TYPE posType = (ENUM_POSITION_TYPE)PositionGetInteger(POSITION_TYPE);
+                if (isBuy && posType == POSITION_TYPE_BUY) {
+                    return true;
+                }
+                if (!isBuy && posType == POSITION_TYPE_SELL) {
+                    return true;
+                }
+            }
         }
+    }
+    return false;
+}
+
+bool canTrade() {
+    static datetime previousDay = iTime(Symbol(), PERIOD_D1, 0);
+    datetime day = iTime(Symbol(), PERIOD_D1, 0);
+    
+    if (day != previousDay) {
+        previousDay = iTime(Symbol(), PERIOD_D1, 0);
+        startingBalance = AccountInfoDouble(ACCOUNT_BALANCE);
+        tradesCount = 0;
+        profitTradesCount = 0;
+        lossTradesCount = 0;
+        lastLowestPointTraded = 0;
+        lastHighestPointTraded = 0;
+        ArrayResize(trackedTickets, 0);
+    }
+
+    // Check if max profit trades limit reached
+    if (maxProfitTrades > 0 && profitTradesCount >= maxProfitTrades) {
+        return false;
+    }
+
+    // Check if max loss trades limit reached
+    if (maxLossTrades > 0 && lossTradesCount >= maxLossTrades) {
+        return false;
+    }
+
+    if (tradesCount < dailyNumberOfTrades) {
+        return true;
     }
 
     return false;
@@ -137,46 +157,21 @@ void DrawHorizontalLine(string name, double price, color lineColor) {
     }
 }
 
-bool canTrade() {
-    static datetime previousDay = iTime(Symbol(), PERIOD_D1, 0);
-    datetime day = iTime(Symbol(), PERIOD_D1, 0);
-    
-    if (day != previousDay) {
-        previousDay = iTime(Symbol(), PERIOD_D1, 0);
-        startingBalance = startingBalance = AccountInfoDouble(ACCOUNT_BALANCE);
-        tradesCount = 0;
-        // Don't reset risk on new day - continue with adjusted risk
-
-        return true;
-    }
-
-    if (tradesCount < dailyNumberOfTrades) {
-        // Allow trading regardless of balance (dynamic risk handles losses)
-        return true;
-    }
-
-    return false;
-}
-
 void Buy() {
-    if (lastPointTraded == highestPoint) {
+    if (lastLowestPointTraded == lowestPoint) {
         return;
     }
 
-    lastPointTraded = highestPoint;
+    lastLowestPointTraded = lowestPoint;
     tradesCount++;
     
     double entryPrice = iClose(_Symbol, PERIOD_CURRENT, 0);
-    // Calculate TP distance from entry, clamped between min and max
-    double tpDistance = highestPoint - entryPrice;
-    tpDistance = MathMax(tpDistance, minimumTradeSize);  // At least minimum
-    tpDistance = MathMin(tpDistance, maximumTradeSize);  // At most maximum
     
     // Set TP and SL based on TP distance
-    double tp = entryPrice + tpDistance;
-    double sl = entryPrice - (tpDistance * slMultiplier);  // SL is 3x TP distance below entry
+    double tp = entryPrice + minimumTradeSize;
+    double sl = entryPrice - (minimumTradeSize * tpMultiplier);
     double volumes[];
-    CalculateVolume(currentRiskAmount, entryPrice, sl, _Symbol, volumes);
+    CalculateVolume(riskAmountPerTrade, entryPrice, sl, _Symbol, volumes);
 
     // If risk amount is too small to calculate any volume, use minimum lot size
     if (ArraySize(volumes) == 0) {
@@ -194,24 +189,20 @@ void Buy() {
 }
 
 void Sell() {
-    if (lastPointTraded == lowestPoint) {
+    if (lastHighestPointTraded == highestPoint) {
         return;
     }
 
-    lastPointTraded = lowestPoint;
+    lastHighestPointTraded = highestPoint;
     tradesCount++;
 
     double entryPrice = iClose(_Symbol, PERIOD_CURRENT, 0);
-    // Calculate TP distance from entry, clamped between min and max
-    double tpDistance = entryPrice - lowestPoint;
-    tpDistance = MathMax(tpDistance, minimumTradeSize);  // At least minimum
-    tpDistance = MathMin(tpDistance, maximumTradeSize);  // At most maximum
     
     // Set TP and SL based on TP distance
-    double tp = entryPrice - tpDistance;
-    double sl = entryPrice + (tpDistance * slMultiplier);  // SL is 3x TP distance above entry
+    double tp = entryPrice - minimumTradeSize;
+    double sl = entryPrice + (minimumTradeSize * tpMultiplier);
     double volumes[];
-    CalculateVolume(currentRiskAmount, entryPrice, sl, _Symbol, volumes);
+    CalculateVolume(riskAmountPerTrade, entryPrice, sl, _Symbol, volumes);
     
     // If risk amount is too small to calculate any volume, use minimum lot size
     if (ArraySize(volumes) == 0) {
@@ -287,22 +278,21 @@ void AddToList(T &list[], T item) {
     list[ArraySize(list) - 1] = item;
 }
 
-// Helper to remove item from array by value
-void RemoveFromList(ulong &list[], ulong value) {
+void RemoveFromList(ulong &list[], ulong item) {
     int size = ArraySize(list);
     for (int i = 0; i < size; i++) {
-        if (list[i] == value) {
-            // Swap with last element and resize
+        if (list[i] == item) {
+            // Move last element to this position
             if (i < size - 1) {
                 list[i] = list[size - 1];
             }
             ArrayResize(list, size - 1);
-            return;
+            break;
         }
     }
 }
 
-// Check for closed positions and adjust risk accordingly
+// Check for closed positions and update profit/loss counters
 void CheckClosedPositions() {
     // First, check tracked tickets - see if any positions closed
     for (int i = ArraySize(trackedTickets) - 1; i >= 0; i--) {
@@ -337,12 +327,12 @@ void CheckClosedPositions() {
             // Remove from tracking
             RemoveFromList(trackedTickets, ticket);
             
-            // Adjust risk based on result
+            // Update profit/loss counters based on result
             if (found) {
                 if (dealProfit > 0) {
-                    HandleWin();
+                    profitTradesCount++;
                 } else if (dealProfit < 0) {
-                    HandleLoss();
+                    lossTradesCount++;
                 }
             }
         }
@@ -370,26 +360,4 @@ void CheckClosedPositions() {
             AddToList(trackedTickets, ticket);
         }
     }
-}
-
-// Handle win - increment consecutive wins and potentially double risk
-void HandleWin() {
-    consecutiveWins++;
-    
-    if (consecutiveWins >= winsToRecover) {
-        // Double the risk, but cap at original
-        double newRisk = currentRiskAmount * 2.0;
-        currentRiskAmount = MathMin(newRisk, originalRiskAmount);
-        consecutiveWins = 0; // Reset counter
-        Print("Win recorded. Risk doubled to ", DoubleToString(currentRiskAmount, 2), " (capped at ", DoubleToString(originalRiskAmount, 2), ")");
-    } else {
-        Print("Win recorded. Consecutive wins: ", consecutiveWins, "/", winsToRecover);
-    }
-}
-
-// Handle loss - halve the risk amount
-void HandleLoss() {
-    consecutiveWins = 0; // Reset consecutive wins
-    currentRiskAmount = currentRiskAmount / 2.0;
-    Print("Loss recorded. Risk halved to ", DoubleToString(currentRiskAmount, 2));
 }
