@@ -308,62 +308,62 @@ void OnTick() {
     OnTickStrategy2();
 }
 
-void CalculateVolume(double riskAmount, double entryPrice, double stopLoss, string symbol, double &volumes[]) {
-    double totalProfit = 0.0;
-    double volumeMax = SymbolInfoDouble(symbol, SYMBOL_VOLUME_MAX);
-    double volumeMin = SymbolInfoDouble(symbol, SYMBOL_VOLUME_MIN);
-    double lotStep = SymbolInfoDouble(symbol, SYMBOL_VOLUME_STEP);
-    int decimalPlaces = GetDecimalPlaces(lotStep);
-    
-    // If risk amount is too small, just return empty array (will be handled by caller)
-    double profitAtMinVolume = 0.0;
-    if (!OrderCalcProfit(ORDER_TYPE_BUY, symbol, volumeMin, MathMin(entryPrice, stopLoss), MathMax(entryPrice, stopLoss), profitAtMinVolume)) {
-        return; // Can't calculate profit
-    }
-    
-    // If minimum lot size profit is already greater than risk amount, return empty
-    // (caller will handle by using minimum lot)
-    if (profitAtMinVolume >= riskAmount) {
-        return;
-    }
-    
-    while (totalProfit < riskAmount) {
-        double volume = volumeMin;
-        double profit = 0.0;
-    
-        while (OrderCalcProfit(ORDER_TYPE_BUY, symbol, volume, MathMin(entryPrice, stopLoss), MathMax(entryPrice, stopLoss), profit) && profit < (riskAmount - totalProfit) && volume < volumeMax) {
-            volume += lotStep;
+    void CalculateVolume(double riskAmount, double entryPrice, double stopLoss, string symbol, double &volumes[]) {
+        double totalProfit = 0.0;
+        double volumeMax = SymbolInfoDouble(symbol, SYMBOL_VOLUME_MAX);
+        double volumeMin = SymbolInfoDouble(symbol, SYMBOL_VOLUME_MIN);
+        double lotStep = SymbolInfoDouble(symbol, SYMBOL_VOLUME_STEP);
+        int decimalPlaces = GetDecimalPlaces(lotStep);
+        
+        // If risk amount is too small, just return empty array (will be handled by caller)
+        double profitAtMinVolume = 0.0;
+        if (!OrderCalcProfit(ORDER_TYPE_BUY, symbol, volumeMin, MathMin(entryPrice, stopLoss), MathMax(entryPrice, stopLoss), profitAtMinVolume)) {
+            return; // Can't calculate profit
         }
         
-        if (profit > (riskAmount - totalProfit)) {
-            volume = volume - lotStep;
-            // Ensure volume doesn't go below minimum
-            volume = MathMax(volume, volumeMin);
+        // If minimum lot size profit is already greater than risk amount, return empty
+        // (caller will handle by using minimum lot)
+        if (profitAtMinVolume >= riskAmount) {
+            return;
         }
+        
+        while (totalProfit < riskAmount) {
+            double volume = volumeMin;
+            double profit = 0.0;
+        
+            while (OrderCalcProfit(ORDER_TYPE_BUY, symbol, volume, MathMin(entryPrice, stopLoss), MathMax(entryPrice, stopLoss), profit) && profit < (riskAmount - totalProfit) && volume < volumeMax) {
+                volume += lotStep;
+            }
+            
+            if (profit > (riskAmount - totalProfit)) {
+                volume = volume - lotStep;
+                // Ensure volume doesn't go below minimum
+                volume = MathMax(volume, volumeMin);
+            }
 
-        // Ensure volume is at least minimum before adding
-        if (volume >= volumeMin) {
-            AddToList(volumes, MathMin(volumeMax, NormalizeDouble(volume, decimalPlaces)));
-            totalProfit += profit;
-        } else {
-            // If volume is still below minimum, break to avoid infinite loop
-            break;
+            // Ensure volume is at least minimum before adding
+            if (volume >= volumeMin) {
+                AddToList(volumes, MathMin(volumeMax, NormalizeDouble(volume, decimalPlaces)));
+                totalProfit += profit;
+            } else {
+                // If volume is still below minimum, break to avoid infinite loop
+                break;
+            }
         }
     }
-}
 
-int GetDecimalPlaces (double number) {
-    int decimalPlaces = 0;
-    while (NormalizeDouble(number, decimalPlaces) != number && decimalPlaces < 15) {
-        decimalPlaces += 1;
+    int GetDecimalPlaces (double number) {
+        int decimalPlaces = 0;
+        while (NormalizeDouble(number, decimalPlaces) != number && decimalPlaces < 15) {
+            decimalPlaces += 1;
+        }
+
+        return decimalPlaces;
     }
 
-    return decimalPlaces;
-}
-
-template<typename T>
-void AddToList(T &list[], T item) {
-    ArrayResize(list, ArraySize(list) + 1);
-    list[ArraySize(list) - 1] = item;
-}
+    template<typename T>
+    void AddToList(T &list[], T item) {
+        ArrayResize(list, ArraySize(list) + 1);
+        list[ArraySize(list) - 1] = item;
+    }
 
