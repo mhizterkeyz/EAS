@@ -7,18 +7,15 @@ input double riskAmountPerTrade = 200; // Risk amount per trade
 input double distanceFromNeckLineToPlaceOrder = 20; // Distance from neck line to place order in points
 input double tpMultiplier = 1.5; // TP multiplier
 
+string TradeComment = "Abobi";
+
 int OnInit() {
     return(INIT_SUCCEEDED);
 }
 
 void OnTick() {
-    static double firstBuyNeckLine = 0;
-    static double firstSellNeckLine = 0;
-    if (firstBuyNeckLine == 0) {
-        LoadFirstNeckLines(firstBuyNeckLine, firstSellNeckLine);
-    }
-    static double buyNeckLine = firstBuyNeckLine;
-    static double sellNeckLine = firstSellNeckLine;
+    static double buyNeckLine = 0;
+    static double sellNeckLine = 0;
     static double lastUsedBuyNeckLine = 0;
     static double lastUsedSellNeckLine = 0;
     static bool buyNeckLineUsed = false;
@@ -50,26 +47,26 @@ void OnTick() {
         +"\nDiff Between Current Price And Buy Neck Line: " + DoubleToString(diffBetweenCurrentPriceAndBuyNeckLine)
         +"\nDiff Between Current Price And Sell Neck Line: " + DoubleToString(diffBetweenCurrentPriceAndSellNeckLine)
     );
-    
+
+
     if (PositionsTotal() > 0) return;
 
     if (
         buyNeckLine > 0 &&
         diffBetweenCurrentPriceAndBuyNeckLine >= distanceFromNeckLineToPlaceOrder &&
-        !hasOpenPositions(false) &&
         !buyNeckLineUsed
     ) {
-        Sell(buyNeckLine);
+        // Sell(buyNeckLine);
         buyNeckLineUsed = true;
     }
 
     if (
         sellNeckLine > 0 &&
         diffBetweenCurrentPriceAndSellNeckLine >= distanceFromNeckLineToPlaceOrder &&
-        !hasOpenPositions(true) &&
         !sellNeckLineUsed
     ) {
-        Buy(sellNeckLine);
+        // Buy(sellNeckLine);
+        RangeSell();
         sellNeckLineUsed = true;
     }
 }
@@ -78,7 +75,7 @@ bool hasOpenPositions(bool isBuy = true) {
     for (int i = 0; i < PositionsTotal(); i++) {
         ulong ticket = PositionGetTicket(i);
         if (ticket > 0 && PositionSelectByTicket(ticket)) {
-            if (PositionGetString(POSITION_SYMBOL) == _Symbol) {
+            if (PositionGetString(POSITION_SYMBOL) == _Symbol && PositionGetString(POSITION_COMMENT) == TradeComment) {
                 ENUM_POSITION_TYPE posType = (ENUM_POSITION_TYPE)PositionGetInteger(POSITION_TYPE);
                 if (isBuy && posType == POSITION_TYPE_BUY) {
                     return true;
@@ -90,6 +87,24 @@ bool hasOpenPositions(bool isBuy = true) {
         }
     }
     return false;
+}
+
+void RangeBuy() {
+    double entryPrice = iClose(_Symbol, PERIOD_CURRENT, 0);
+    double tp = entryPrice + (entryPrice - sl) * tpMultiplier;
+    double sl = sellNeckLine;
+
+    double volumes[];
+    CalculateVolume(riskAmountPerTrade, entryPrice, sl, _Symbol, volumes);
+
+    if (ArraySize(volumes) == 0) {
+        double minVolume = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MIN);
+        AddToList(volumes, minVolume);
+    }
+
+    for (int i = 0; i < ArraySize(volumes); i++) {
+        Trade.Buy(volumes[i], _Symbol, 0, sl, tp, TradeComment);
+    }
 }
 
 void Buy(double sellNeckLine) {
@@ -106,8 +121,19 @@ void Buy(double sellNeckLine) {
     }
 
     for (int i = 0; i < ArraySize(volumes); i++) {
-        Trade.Buy(volumes[i], _Symbol, 0, sl, tp);
+        Trade.Buy(volumes[i], _Symbol, 0, sl, tp, TradeComment);
     }
+}
+
+void RangeSell() {
+    double entryPrice = iClose(_Symbol, PERIOD_CURRENT, 0);
+    double tp = entryPrice - distanceFromNeckLineToPlaceOrder;
+    double sl = entryPrice + distanceFromNeckLineToPlaceOrder * tpMultiplier;
+
+    double volumes[];
+    CalculateVolume(riskAmountPerTrade, entryPrice, sl, _Symbol, volumes);
+    
+    Trade.Sell(0.01, _Symbol, 0, sl, tp, "Range");
 }
 
 void Sell(double buyNeckLine) {
@@ -124,7 +150,7 @@ void Sell(double buyNeckLine) {
     }
 
     for (int i = 0; i < ArraySize(volumes); i++) {
-        Trade.Sell(volumes[i], _Symbol, 0, sl, tp);
+        Trade.Sell(volumes[i], _Symbol, 0, sl, tp, TradeComment);
     }
 }
 
@@ -136,71 +162,38 @@ bool IsBearish(int index) {
     return iClose(_Symbol, PERIOD_CURRENT, index) < iOpen(_Symbol, PERIOD_CURRENT, index);
 }
 
-void LoadFirstNeckLines(double &buyNeckLine, double &sellNeckLine) {
-    buyNeckLine = 0;
-    sellNeckLine = 0;
-    
-    // Loop from current candle (index 0) backwards
-    for (int i = 0; i < Bars(_Symbol, PERIOD_CURRENT) - 3; i++) {
-        // Check for Buy Neck Line: candle at i+2 is bullish, i+1 is bearish, 
-        // and max(close(i+3), open(i+3)) < close(i+2)
-        if (buyNeckLine == 0 && 
-            IsBullish(i + 2) && 
-            IsBearish(i + 1) &&
-            MathMax(iClose(_Symbol, PERIOD_CURRENT, i + 3), iOpen(_Symbol, PERIOD_CURRENT, i + 3)) < iClose(_Symbol, PERIOD_CURRENT, i + 2)) {
-            buyNeckLine = iClose(_Symbol, PERIOD_CURRENT, i + 2);
-        }
-        
-        // Check for Sell Neck Line: candle at i+2 is bearish, i+1 is bullish,
-        // and min(close(i+3), open(i+3)) > close(i+2)
-        if (sellNeckLine == 0 && 
-            IsBearish(i + 2) && 
-            IsBullish(i + 1) &&
-            MathMin(iClose(_Symbol, PERIOD_CURRENT, i + 3), iOpen(_Symbol, PERIOD_CURRENT, i + 3)) > iClose(_Symbol, PERIOD_CURRENT, i + 2)) {
-            sellNeckLine = iClose(_Symbol, PERIOD_CURRENT, i + 2);
-        }
-        
-        // Stop if both necklines are found
-        if (buyNeckLine > 0 && sellNeckLine > 0) {
-            break;
-        }
-    }
-}
-
 void GetNeckLines(double &buyNeckLine, double &sellNeckLine, bool &buyNeckLineUsed, bool &sellNeckLineUsed) {
 
     // - Buy Neck Line
     //  - 2 bullish, 1 bearish, 3 open and close below close of 2
     if (
         IsBullish(2) &&
-        IsBearish(1) &&
-        MathMax(iClose(_Symbol, PERIOD_CURRENT, 3), iOpen(_Symbol, PERIOD_CURRENT, 3)) < iClose(_Symbol, PERIOD_CURRENT, 2)
+        IsBearish(1)
     ) {
-        if (
-            buyNeckLine == 0 ||
-            buyNeckLineUsed ||
-            iClose(_Symbol, PERIOD_CURRENT, 2) - buyNeckLine > 0 ||
-            buyNeckLine - iClose(_Symbol, PERIOD_CURRENT, 2) > distanceFromNeckLineToPlaceOrder
-        ) {
+        // if (
+        //     buyNeckLine == 0 ||
+        //     buyNeckLineUsed ||
+        //     iClose(_Symbol, PERIOD_CURRENT, 2) - buyNeckLine > 0 ||
+        //     buyNeckLine - iClose(_Symbol, PERIOD_CURRENT, 2) > distanceFromNeckLineToPlaceOrder
+        // ) {
             buyNeckLine = iClose(_Symbol, PERIOD_CURRENT, 2);
-        }
+        // }
     }
 
     // - Sell Neck Line
     //  - 2 bearish, 1 bullish, 3 open and close above open of 2
     if (
         IsBearish(2) &&
-        IsBullish(1) &&
-        MathMin(iClose(_Symbol, PERIOD_CURRENT, 3), iOpen(_Symbol, PERIOD_CURRENT, 3)) > iClose(_Symbol, PERIOD_CURRENT, 2)
+        IsBullish(1)
     ) {
-        if (
-            sellNeckLine == 0 ||
-            sellNeckLineUsed ||
-            sellNeckLine - iClose(_Symbol, PERIOD_CURRENT, 2) > 0 ||
-            iClose(_Symbol, PERIOD_CURRENT, 2) - sellNeckLine > distanceFromNeckLineToPlaceOrder
-        ) {
+        // if (
+        //     sellNeckLine == 0 ||
+        //     sellNeckLineUsed ||
+        //     sellNeckLine - iClose(_Symbol, PERIOD_CURRENT, 2) > 0 ||
+        //     iClose(_Symbol, PERIOD_CURRENT, 2) - sellNeckLine > distanceFromNeckLineToPlaceOrder
+        // ) {
             sellNeckLine = iClose(_Symbol, PERIOD_CURRENT, 2);
-        }
+        // }
     }
 }
 
@@ -271,4 +264,36 @@ template<typename T>
 void AddToList(T &list[], T item) {
     ArrayResize(list, ArraySize(list) + 1);
     list[ArraySize(list) - 1] = item;
+}
+
+void GetLossAndWinCount(int &lossCount, int &winCount) {
+    // Check for new closed deals and count consecutive losses
+    if (HistorySelect(0, TimeCurrent())) {
+        int totalDeals = HistoryDealsTotal();
+        for (int i = 0; i < totalDeals; i++) {
+            ulong dealTicket = HistoryDealGetTicket(i);
+            if (dealTicket > 0 && dealTicket > lastCheckedDealTicket) {
+                if (HistoryDealGetString(dealTicket, DEAL_SYMBOL) == _Symbol) {
+                    ENUM_DEAL_ENTRY dealEntry = (ENUM_DEAL_ENTRY)HistoryDealGetInteger(dealTicket, DEAL_ENTRY);
+                    // Only count closing deals (DEAL_ENTRY_OUT)
+                    if (dealEntry == DEAL_ENTRY_OUT) {
+                        double profit = HistoryDealGetDouble(dealTicket, DEAL_PROFIT);
+                        double swap = HistoryDealGetDouble(dealTicket, DEAL_SWAP);
+                        double commission = HistoryDealGetDouble(dealTicket, DEAL_COMMISSION);
+                        double totalProfit = profit + swap + commission;
+                        
+                        
+                        if (totalProfit > 0) {
+                            lossCount = 0;
+                            winCount++;
+                        } else if (totalProfit < 0) {
+                            lossCount++;
+                            winCount = 0;
+                        }
+                    }
+                }
+                lastCheckedDealTicket = dealTicket;
+            }
+        }
+    }
 }
