@@ -6,8 +6,10 @@ CTrade Trade;
 input double riskAmountPerTrade = 200; // Risk amount per trade
 input double distanceFromNeckLineToPlaceOrder = 20; // Distance from neck line to place order in points
 input double tpMultiplier = 1.5; // TP multiplier
+input int MAGIC_NUMBER = 123456; // Magic number for trade identification
 
 int OnInit() {
+    Trade.SetExpertMagicNumber(MAGIC_NUMBER);
     return(INIT_SUCCEEDED);
 }
 
@@ -51,7 +53,10 @@ void OnTick() {
         +"\nDiff Between Current Price And Sell Neck Line: " + DoubleToString(diffBetweenCurrentPriceAndSellNeckLine)
     );
     
-    if (PositionsTotal() > 0) return;
+    if (PositionsTotal() > 0) {
+        ManageTrade();
+        return;
+    }
 
     if (
         buyNeckLine > 0 &&
@@ -105,6 +110,7 @@ void Buy(double sellNeckLine) {
         AddToList(volumes, minVolume);
     }
 
+    Trade.SetExpertMagicNumber(MAGIC_NUMBER);
     for (int i = 0; i < ArraySize(volumes); i++) {
         Trade.Buy(volumes[i], _Symbol, 0, sl, tp);
     }
@@ -123,6 +129,7 @@ void Sell(double buyNeckLine) {
         AddToList(volumes, minVolume);
     }
 
+    Trade.SetExpertMagicNumber(MAGIC_NUMBER);
     for (int i = 0; i < ArraySize(volumes); i++) {
         Trade.Sell(volumes[i], _Symbol, 0, sl, tp);
     }
@@ -271,4 +278,148 @@ template<typename T>
 void AddToList(T &list[], T item) {
     ArrayResize(list, ArraySize(list) + 1);
     list[ArraySize(list) - 1] = item;
+}
+
+void ManageTrade() {
+    static ulong trackedTickets[];
+    static bool marker1Hit[];
+    static bool marker2Hit[];
+    static bool marker3Hit[];
+    static bool marker4Hit[];
+    static double originalEntry[];
+    static double originalVolume[];
+    static double originalSL[];
+    static ENUM_POSITION_TYPE positionType[];
+    
+    double currentPrice = iClose(_Symbol, PERIOD_CURRENT, 0);
+    
+    // First, clean up closed positions from tracking arrays
+    int validCount = 0;
+    for (int i = 0; i < ArraySize(trackedTickets); i++) {
+        if (PositionSelectByTicket(trackedTickets[i])) {
+            if (PositionGetInteger(POSITION_MAGIC) == MAGIC_NUMBER) {
+                // Keep this position in tracking
+                if (validCount != i) {
+                    trackedTickets[validCount] = trackedTickets[i];
+                    marker1Hit[validCount] = marker1Hit[i];
+                    marker2Hit[validCount] = marker2Hit[i];
+                    marker3Hit[validCount] = marker3Hit[i];
+                    marker4Hit[validCount] = marker4Hit[i];
+                    originalEntry[validCount] = originalEntry[i];
+                    originalVolume[validCount] = originalVolume[i];
+                    originalSL[validCount] = originalSL[i];
+                    positionType[validCount] = positionType[i];
+                }
+                validCount++;
+            }
+        }
+    }
+    
+    // Resize arrays to remove closed positions
+    if (validCount < ArraySize(trackedTickets)) {
+        ArrayResize(trackedTickets, validCount);
+        ArrayResize(marker1Hit, validCount);
+        ArrayResize(marker2Hit, validCount);
+        ArrayResize(marker3Hit, validCount);
+        ArrayResize(marker4Hit, validCount);
+        ArrayResize(originalEntry, validCount);
+        ArrayResize(originalVolume, validCount);
+        ArrayResize(originalSL, validCount);
+        ArrayResize(positionType, validCount);
+    }
+    
+    // Process all open positions with the magic number
+    for (int i = 0; i < PositionsTotal(); i++) {
+        ulong ticket = PositionGetTicket(i);
+        if (ticket == 0 || !PositionSelectByTicket(ticket)) continue;
+        if (PositionGetInteger(POSITION_MAGIC) != MAGIC_NUMBER) continue;
+        
+        // Find or add this ticket to tracking
+        int trackIndex = -1;
+        for (int j = 0; j < ArraySize(trackedTickets); j++) {
+            if (trackedTickets[j] == ticket) {
+                trackIndex = j;
+                break;
+            }
+        }
+        
+        // If not tracked, add it
+        if (trackIndex == -1) {
+            int newSize = ArraySize(trackedTickets) + 1;
+            ArrayResize(trackedTickets, newSize);
+            ArrayResize(marker1Hit, newSize);
+            ArrayResize(marker2Hit, newSize);
+            ArrayResize(marker3Hit, newSize);
+            ArrayResize(marker4Hit, newSize);
+            ArrayResize(originalEntry, newSize);
+            ArrayResize(originalVolume, newSize);
+            ArrayResize(originalSL, newSize);
+            ArrayResize(positionType, newSize);
+            
+            trackIndex = newSize - 1;
+            trackedTickets[trackIndex] = ticket;
+            originalEntry[trackIndex] = PositionGetDouble(POSITION_PRICE_OPEN);
+            originalVolume[trackIndex] = PositionGetDouble(POSITION_VOLUME);
+            originalSL[trackIndex] = PositionGetDouble(POSITION_SL);
+            positionType[trackIndex] = (ENUM_POSITION_TYPE)PositionGetInteger(POSITION_TYPE);
+            marker1Hit[trackIndex] = false;
+            marker2Hit[trackIndex] = false;
+            marker3Hit[trackIndex] = false;
+            marker4Hit[trackIndex] = false;
+        }
+        
+        // Manage this position
+        double entry = originalEntry[trackIndex];
+        double sl = originalSL[trackIndex];
+        double slDistance = MathAbs(entry - sl); // Calculate SL distance dynamically
+        double origVol = originalVolume[trackIndex];
+        double closeVolume = origVol * 0.25; // 25% of original volume
+        ENUM_POSITION_TYPE posType = positionType[trackIndex];
+        
+        double marker1, marker2, marker3, marker4;
+        
+        if (posType == POSITION_TYPE_BUY) {
+            // For buy: SL is below entry, markers are between entry and SL
+            marker1 = entry - slDistance * 0.25;
+            marker2 = entry - slDistance * 0.50;
+            marker3 = entry - slDistance * 0.75;
+            marker4 = entry - slDistance * 1.00;
+            
+            // Check if price has hit markers (price moving down towards SL)
+            if (!marker1Hit[trackIndex] && currentPrice <= marker1) {
+                Trade.PositionClosePartial(ticket, closeVolume);
+                marker1Hit[trackIndex] = true;
+            } else if (!marker2Hit[trackIndex] && currentPrice <= marker2) {
+                Trade.PositionClosePartial(ticket, closeVolume);
+                marker2Hit[trackIndex] = true;
+            } else if (!marker3Hit[trackIndex] && currentPrice <= marker3) {
+                Trade.PositionClosePartial(ticket, closeVolume);
+                marker3Hit[trackIndex] = true;
+            } else if (!marker4Hit[trackIndex] && currentPrice <= marker4) {
+                Trade.PositionClosePartial(ticket, closeVolume);
+                marker4Hit[trackIndex] = true;
+            }
+        } else if (posType == POSITION_TYPE_SELL) {
+            // For sell: SL is above entry, markers are between entry and SL
+            marker1 = entry + slDistance * 0.25;
+            marker2 = entry + slDistance * 0.50;
+            marker3 = entry + slDistance * 0.75;
+            marker4 = entry + slDistance * 1.00;
+            
+            // Check if price has hit markers (price moving up towards SL)
+            if (!marker1Hit[trackIndex] && currentPrice >= marker1) {
+                Trade.PositionClosePartial(ticket, closeVolume);
+                marker1Hit[trackIndex] = true;
+            } else if (!marker2Hit[trackIndex] && currentPrice >= marker2) {
+                Trade.PositionClosePartial(ticket, closeVolume);
+                marker2Hit[trackIndex] = true;
+            } else if (!marker3Hit[trackIndex] && currentPrice >= marker3) {
+                Trade.PositionClosePartial(ticket, closeVolume);
+                marker3Hit[trackIndex] = true;
+            } else if (!marker4Hit[trackIndex] && currentPrice >= marker4) {
+                Trade.PositionClosePartial(ticket, closeVolume);
+                marker4Hit[trackIndex] = true;
+            }
+        }
+    }
 }
